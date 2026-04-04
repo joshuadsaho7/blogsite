@@ -1,0 +1,869 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Atlas — Travel Journal</title>
+<meta name="description" content="A personal travel journal" />
+<script src="https://unpkg.com/react@18/umd/react.production.min.js" crossorigin></script>
+<script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js" crossorigin></script>
+<script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-database-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-auth-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-storage-compat.js"></script>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html { scroll-behavior: smooth; }
+  body { background: #0a0a0c; font-family: Georgia,'Times New Roman',serif; overflow-x: hidden; }
+  #root { min-height: 100vh; }
+  #loading { position: fixed; inset: 0; background: #0a0a0c; display: flex; align-items: center; justify-content: center; color: #252220; font-family: Georgia,serif; font-style: italic; font-size: 18px; z-index: 9999; transition: opacity .4s; }
+</style>
+</head>
+<body>
+<div id="loading">Loading your atlas…</div>
+<div id="root"></div>
+<script type="text/babel">
+const { useState, useEffect, useRef, useCallback } = React;
+
+// ── FIREBASE ──────────────────────────────────────────────────
+const firebaseConfig = {
+  apiKey: "AIzaSyAbBZ8_R19NotMTtHfJn-Olf9_dkNsrkcY",
+  authDomain: "myatlas-477fd.firebaseapp.com",
+  projectId: "myatlas-477fd",
+  storageBucket: "myatlas-477fd.firebasestorage.app",
+  messagingSenderId: "595257483759",
+  appId: "1:595257483759:web:5cde8c383c549d2268961a",
+  databaseURL: "https://myatlas-477fd-default-rtdb.firebaseio.com"
+};
+if (!firebase.apps.length) firebase.initializeApp(firebaseConfig);
+const db      = firebase.database().ref("articles");
+const auth    = firebase.auth();
+const storage = firebase.storage();
+
+// ── OWNER UID ─────────────────────────────────────────────────
+// After signing in for the first time, your UID will be shown
+// in the admin menu. Paste it here, then redeploy.
+const OWNER_UID = "PASTE_YOUR_UID_HERE";
+
+// ── HELPERS ───────────────────────────────────────────────────
+const genId    = () => Math.random().toString(36).substr(2, 9);
+const fmtDate  = d => d ? new Date(d+"T12:00:00").toLocaleDateString("en-US",{year:"numeric",month:"long",day:"numeric"}) : "";
+const fmtShort = d => d ? new Date(d+"T12:00:00").toLocaleDateString("en-US",{month:"short",day:"numeric",year:"numeric"}) : "";
+const strip    = h => { const d=document.createElement("div"); d.innerHTML=h; return d.textContent||""; };
+const exc      = (h,n=100) => { const t=strip(h); return t.length>n?t.slice(0,n)+"…":t; };
+
+const toVideoEmbed = url => {
+  if (!url) return null;
+  const yt = url.match(/(?:youtube\.com\/watch\?v=|youtu\.be\/)([a-zA-Z0-9_-]{11})/);
+  if (yt) return { src:`https://www.youtube.com/embed/${yt[1]}?rel=0`, label:"YouTube" };
+  const vm = url.match(/vimeo\.com\/(\d+)/);
+  if (vm) return { src:`https://player.vimeo.com/video/${vm[1]}`, label:"Vimeo" };
+  return null;
+};
+const toSpotifyEmbed = url => {
+  if (!url) return null;
+  const m = url.match(/spotify\.com\/(playlist|album|track|artist)\/([a-zA-Z0-9]+)/);
+  return m ? `https://open.spotify.com/embed/${m[1]}/${m[2]}?utm_source=generator&theme=0` : null;
+};
+
+// Upload a File object to Firebase Storage, return download URL
+async function uploadToStorage(file) {
+  const ext  = file.name.split(".").pop();
+  const path = `images/${Date.now()}_${Math.random().toString(36).substr(2,6)}.${ext}`;
+  const ref  = storage.ref(path);
+  await ref.put(file);
+  return await ref.getDownloadURL();
+}
+
+// ── CSS ───────────────────────────────────────────────────────
+const CSS = `
+.app { background: #0a0a0c; min-height: 100vh; color: #e2ddd6; font-family: Georgia,serif; }
+
+/* NAV */
+.nav { position: fixed; top:0; left:0; right:0; z-index:200; display:flex; align-items:center; justify-content:space-between; padding:0 36px; height:56px; background:rgba(10,10,12,0); transition:all .35s; }
+.nav.scrolled { background:rgba(10,10,12,0.94); backdrop-filter:blur(20px); border-bottom:1px solid rgba(255,255,255,0.05); }
+.nav-logo { font-size:13px; font-weight:600; letter-spacing:8px; text-transform:uppercase; cursor:pointer; color:#e2ddd6; user-select:none; }
+.nav-logo em { color:#c9a84c; font-style:normal; }
+.nav-right { display:flex; align-items:center; gap:12px; }
+
+/* AUTH */
+.auth-avatar { width:30px; height:30px; border-radius:50%; object-fit:cover; border:1.5px solid rgba(201,168,76,0.35); cursor:pointer; transition:border-color .2s; }
+.auth-avatar:hover { border-color:#c9a84c; }
+.auth-menu { position:absolute; top:44px; right:0; background:#18161a; border:1px solid rgba(255,255,255,0.08); border-radius:10px; padding:8px; min-width:220px; box-shadow:0 16px 40px rgba(0,0,0,.65); z-index:400; }
+.auth-menu-user { padding:10px 12px 14px; border-bottom:1px solid rgba(255,255,255,0.06); margin-bottom:6px; }
+.auth-menu-name { font-size:13px; color:#e2ddd6; font-weight:600; margin-bottom:2px; }
+.auth-menu-email { font-size:11px; color:#484440; font-family:'Helvetica Neue',sans-serif; }
+.auth-menu-uid { font-size:10px; color:#c9a84c; font-family:'Helvetica Neue',sans-serif; letter-spacing:.3px; margin-top:8px; padding:6px 8px; background:rgba(201,168,76,.07); border-radius:4px; word-break:break-all; cursor:pointer; }
+.auth-menu-uid:hover { background:rgba(201,168,76,.13); }
+.auth-menu-uid-label { font-size:9px; letter-spacing:2px; text-transform:uppercase; color:#706050; margin-bottom:3px; }
+.auth-menu-btn { width:100%; padding:8px 12px; background:transparent; border:none; border-radius:6px; cursor:pointer; font-size:12px; font-family:Georgia,serif; text-align:left; transition:background .15s; display:flex; align-items:center; gap:8px; color:#908880; }
+.auth-menu-btn:hover { background:rgba(255,255,255,0.05); color:#e2ddd6; }
+.auth-menu-btn.danger { color:#a05050; }
+.auth-menu-btn.danger:hover { background:rgba(160,80,80,0.08); color:#c06060; }
+
+/* BUTTONS */
+.btn { display:inline-flex; align-items:center; gap:5px; padding:8px 18px; border-radius:7px; font-size:12px; cursor:pointer; font-family:Georgia,serif; letter-spacing:.3px; transition:all .18s; border:none; line-height:1; font-weight:700; }
+.btn-gold { background:#c9a84c; color:#0a0a0c; }
+.btn-gold:hover { background:#ddb85a; }
+.btn-outline { background:transparent; color:#908880; border:1px solid rgba(255,255,255,0.1); font-weight:400; }
+.btn-outline:hover { background:rgba(255,255,255,0.06); color:#e2ddd6; }
+.btn-ghost { background:rgba(255,255,255,0.05); color:#908880; border:1px solid transparent; font-weight:400; }
+.btn-ghost:hover { background:rgba(255,255,255,0.09); color:#e2ddd6; }
+.btn-red { background:transparent; color:#a05050; border:1px solid rgba(160,80,80,0.2); font-weight:400; }
+.btn-red:hover { background:rgba(160,80,80,0.1); border-color:rgba(160,80,80,0.4); }
+.btn-sm { padding:7px 15px; font-size:12px; border-radius:6px; }
+.btn-xs { padding:4px 10px; font-size:11px; border-radius:4px; }
+
+/* CAROUSEL */
+.carousel { position:relative; height:100vh; min-height:560px; max-height:860px; overflow:hidden; background:#0a0a0c; cursor:pointer; }
+.carousel-slide { position:absolute; inset:0; opacity:0; transition:opacity 1.1s ease; pointer-events:none; }
+.carousel-slide.active { opacity:1; pointer-events:auto; }
+.carousel-slide img { width:100%; height:100%; object-fit:cover; display:block; transform:scale(1.04); transition:transform 8s ease; }
+.carousel-slide.active img { transform:scale(1); }
+.carousel-grad { position:absolute; inset:0; background:linear-gradient(170deg,rgba(0,0,0,.08) 0%,rgba(0,0,0,.02) 30%,rgba(0,0,0,.86) 100%); }
+.carousel-body { position:absolute; bottom:0; left:0; right:0; max-width:860px; padding:0 56px 72px; }
+.carousel-loc { font-family:'Helvetica Neue',sans-serif; font-size:10px; letter-spacing:5px; text-transform:uppercase; color:#c9a84c; margin-bottom:14px; display:block; font-weight:700; }
+.carousel-title { font-size:clamp(28px,4.4vw,58px); font-weight:600; line-height:1.1; color:#fff; margin-bottom:16px; letter-spacing:-.8px; }
+.carousel-sub { font-size:18px; font-style:italic; color:rgba(255,255,255,.52); max-width:580px; margin-bottom:28px; }
+.carousel-read { display:inline-flex; align-items:center; gap:8px; padding:11px 24px; background:rgba(255,255,255,0.08); border:1px solid rgba(255,255,255,0.15); border-radius:8px; color:rgba(255,255,255,0.75); font-family:Georgia,serif; font-size:13px; cursor:pointer; transition:all .2s; backdrop-filter:blur(8px); }
+.carousel-read:hover { background:rgba(255,255,255,0.14); color:#fff; }
+.carousel-date { position:absolute; top:72px; right:48px; font-family:'Helvetica Neue',sans-serif; font-size:12px; color:rgba(255,255,255,.28); }
+.carousel-dots { position:absolute; bottom:36px; right:48px; display:flex; gap:8px; }
+.cdot { width:6px; height:6px; border-radius:50%; background:rgba(255,255,255,.2); cursor:pointer; transition:all .25s; border:none; padding:0; }
+.cdot.on { background:#c9a84c; transform:scale(1.3); }
+.carousel-arr { position:absolute; top:50%; transform:translateY(-50%); background:rgba(0,0,0,.28); border:1px solid rgba(255,255,255,0.1); border-radius:50%; width:46px; height:46px; display:flex; align-items:center; justify-content:center; cursor:pointer; color:rgba(255,255,255,.6); font-size:18px; transition:all .2s; backdrop-filter:blur(8px); }
+.carousel-arr:hover { background:rgba(0,0,0,.5); color:#fff; }
+.carousel-arr.prev { left:24px; }
+.carousel-arr.next { right:24px; }
+.carousel-progress { position:absolute; bottom:0; left:0; height:2px; background:#c9a84c; transition:none; }
+.carousel-progress.animating { transition:width 5.5s linear; }
+
+/* HOME */
+.home { max-width:1180px; margin:0 auto; padding:48px 24px 80px; }
+.section-label { font-family:'Helvetica Neue',sans-serif; font-size:10px; letter-spacing:4px; text-transform:uppercase; color:#383634; margin-bottom:22px; padding-bottom:16px; border-bottom:1px solid rgba(255,255,255,0.05); }
+.grid { display:grid; grid-template-columns:repeat(3,1fr); gap:18px; margin-bottom:40px; }
+@media(max-width:820px){ .grid { grid-template-columns:1fr 1fr; } }
+@media(max-width:520px){ .grid { grid-template-columns:1fr; } }
+.card { background:#141316; border-radius:10px; overflow:hidden; cursor:pointer; border:1px solid rgba(255,255,255,0.04); transition:border-color .2s, transform .22s; display:flex; flex-direction:column; }
+.card:hover { border-color:rgba(255,255,255,0.1); transform:translateY(-3px); }
+.card-img { aspect-ratio:4/3; overflow:hidden; background:#1c1a1e; }
+.card-img img { width:100%; height:100%; object-fit:cover; display:block; transition:transform .45s ease; }
+.card:hover .card-img img { transform:scale(1.06); }
+.card-no-img { aspect-ratio:4/3; background:#1c1a1e; display:flex; align-items:center; justify-content:center; font-size:36px; opacity:.08; }
+.card-body { padding:18px 20px 20px; flex:1; display:flex; flex-direction:column; }
+.card-loc { font-family:'Helvetica Neue',sans-serif; font-size:9px; letter-spacing:3px; text-transform:uppercase; color:#c9a84c; margin-bottom:8px; font-weight:600; }
+.card-title { font-size:17px; font-weight:600; line-height:1.3; color:#d8d4ce; margin-bottom:8px; transition:color .18s; }
+.card:hover .card-title { color:#c9a84c; }
+.card-sub { font-size:13px; font-style:italic; color:#525050; line-height:1.6; flex:1; margin-bottom:12px; }
+.card-date { font-family:'Helvetica Neue',sans-serif; font-size:10px; color:#383634; }
+
+/* DRAFTS */
+.drafts { margin-top:48px; }
+.drafts-divider { display:flex; align-items:center; gap:16px; margin-bottom:20px; }
+.drafts-divider-line { flex:1; height:1px; background:rgba(255,255,255,0.05); }
+.drafts-divider-label { font-family:'Helvetica Neue',sans-serif; font-size:10px; letter-spacing:4px; text-transform:uppercase; color:#343230; white-space:nowrap; }
+.draft-row { display:flex; align-items:center; justify-content:space-between; padding:14px 0; border-bottom:1px solid rgba(255,255,255,0.04); cursor:pointer; gap:16px; }
+.draft-row:hover .dr-title { color:#c9a84c; }
+.dr-left { display:flex; align-items:center; gap:14px; min-width:0; flex:1; }
+.dr-thumb { width:60px; height:42px; border-radius:5px; object-fit:cover; flex-shrink:0; }
+.dr-thumb-empty { width:60px; height:42px; border-radius:5px; background:#1c1a1e; flex-shrink:0; }
+.dr-title { font-size:15px; color:#706e6a; transition:color .18s; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.dr-title.empty { font-style:italic; color:#343230; }
+.dr-loc { font-family:'Helvetica Neue',sans-serif; font-size:9px; letter-spacing:2.5px; text-transform:uppercase; color:#c9a84c; margin-top:3px; }
+.dr-right { display:flex; gap:8px; align-items:center; flex-shrink:0; }
+.dr-date { font-family:'Helvetica Neue',sans-serif; font-size:11px; color:#363432; }
+.empty { text-align:center; padding:80px 0; }
+.empty-head { font-size:22px; font-style:italic; color:#252322; margin-bottom:10px; }
+.empty-sub { font-size:14px; color:#1e1c1a; }
+
+/* ARTICLE VIEW */
+.av-hero { position:relative; height:clamp(320px,52vh,620px); overflow:hidden; background:#0e0c10; }
+.av-hero img { width:100%; height:100%; object-fit:cover; display:block; }
+.av-hero-grad { position:absolute; inset:0; background:linear-gradient(to top,rgba(0,0,0,.84) 0%,rgba(0,0,0,.08) 55%,transparent 100%); }
+.av-hero-text { position:absolute; bottom:0; left:0; right:0; max-width:800px; margin:0 auto; padding:0 40px 48px; }
+.av-no-hero-text { max-width:800px; margin:0 auto; padding:72px 40px 28px; }
+.av-loc { font-family:'Helvetica Neue',sans-serif; font-size:10px; letter-spacing:4px; text-transform:uppercase; color:#c9a84c; margin-bottom:14px; display:block; font-weight:600; }
+.av-title { font-size:clamp(26px,4vw,50px); font-weight:600; line-height:1.12; color:#fff; margin-bottom:14px; letter-spacing:-.6px; }
+.av-title.onpage { color:#e2ddd6; }
+.av-sub { font-size:19px; font-style:italic; color:rgba(255,255,255,.52); line-height:1.5; }
+.av-sub.onpage { color:#505050; }
+.av-bar { display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:12px; max-width:800px; margin:0 auto; padding:18px 40px; border-bottom:1px solid rgba(255,255,255,0.05); }
+.av-bar-l { display:flex; align-items:center; gap:12px; flex-wrap:wrap; }
+.av-bar-r { display:flex; gap:8px; }
+.av-date { font-family:'Helvetica Neue',sans-serif; font-size:11px; color:#444240; }
+.av-status { font-family:'Helvetica Neue',sans-serif; font-size:9px; letter-spacing:2px; text-transform:uppercase; padding:3px 9px; border-radius:4px; }
+.av-status.pub { background:rgba(201,168,76,.1); color:#c9a84c; }
+.av-status.draft { background:rgba(180,90,90,.08); color:#a06060; }
+.av-content { max-width:800px; margin:0 auto; padding:44px 40px 80px; }
+.av-body { font-size:19px; line-height:1.92; color:#b0aca6; }
+.av-body p { margin-bottom:1.55em; }
+.av-body h2 { font-size:28px; font-weight:600; color:#e2ddd6; margin:2.4em 0 .7em; padding-bottom:12px; border-bottom:1px solid rgba(255,255,255,0.06); }
+.av-body h3 { font-size:22px; font-weight:600; color:#e2ddd6; margin:1.8em 0 .6em; }
+.av-body blockquote { border-left:3px solid #c9a84c; padding:2px 0 2px 26px; margin:2.2em 0; font-style:italic; font-size:23px; color:#706860; line-height:1.6; }
+.av-body ul,.av-body ol { padding-left:26px; margin-bottom:1.55em; }
+.av-body li { margin-bottom:.5em; line-height:1.85; }
+.av-body hr { border:none; border-top:1px solid rgba(255,255,255,0.06); margin:3.5em 0; }
+.av-body strong { font-weight:600; color:#d0ccc6; }
+.av-body a { color:#c9a84c; text-decoration:none; border-bottom:1px solid rgba(201,168,76,.25); }
+.av-body figure { margin:2.8em -40px; }
+.av-body figure img { width:100%; display:block; }
+.av-body figcaption { font-size:12px; font-family:'Helvetica Neue',sans-serif; color:#484440; text-align:center; margin-top:10px; padding:0 40px; font-style:italic; }
+.av-body .video-wrap { position:relative; padding-bottom:56.25%; height:0; overflow:hidden; margin:2.8em -40px; }
+.av-body .video-wrap iframe { position:absolute; top:0; left:0; width:100%; height:100%; border:none; }
+
+/* EDITOR */
+.ed { max-width:880px; margin:0 auto; padding:80px 28px 80px; }
+.ed-top { display:flex; justify-content:space-between; align-items:center; margin-bottom:32px; padding-bottom:20px; border-bottom:1px solid rgba(255,255,255,0.05); }
+.ed-label { font-family:'Helvetica Neue',sans-serif; font-size:10px; letter-spacing:4px; text-transform:uppercase; color:#343230; }
+.ed-actions { display:flex; gap:8px; }
+.cover-zone { margin-bottom:8px; border-radius:10px; overflow:hidden; position:relative; }
+.cover-preview { width:100%; height:220px; object-fit:cover; display:block; border-radius:10px; }
+.cover-placeholder { width:100%; height:160px; background:#141316; border-radius:10px; border:1px dashed rgba(255,255,255,0.06); display:flex; flex-direction:column; align-items:center; justify-content:center; gap:8px; color:#282624; font-size:13px; font-style:italic; cursor:pointer; transition:border-color .2s, color .2s; }
+.cover-placeholder:hover { border-color:rgba(201,168,76,.2); color:#504e4c; }
+.cover-change-btns { position:absolute; top:12px; right:12px; display:flex; gap:6px; }
+.cover-url-wrap { margin-bottom:16px; }
+.ef { width:100%; background:transparent; border:none; border-bottom:1px solid rgba(255,255,255,0.07); outline:none; font-family:Georgia,serif; color:#e2ddd6; padding:10px 0; transition:border-color .2s; }
+.ef:focus { border-bottom-color:rgba(201,168,76,.4); }
+.ef::placeholder { color:#282624; font-style:italic; }
+.ef-title { font-size:28px; font-weight:600; }
+.ef-sub { font-size:17px; font-style:italic; color:#555250; }
+.ef-meta-row { display:flex; gap:20px; }
+.ef-meta-row .ef { font-size:12px; font-family:'Helvetica Neue',sans-serif; color:#555250; }
+.ef-url { font-size:12px; color:#343230; font-family:'Helvetica Neue',sans-serif; }
+.ed-spacer { height:24px; }
+.toolbar { display:flex; flex-wrap:wrap; gap:1px; padding:8px 10px; background:#161416; border-radius:8px 8px 0 0; border:1px solid rgba(255,255,255,0.07); border-bottom:none; }
+.tbtn { padding:5px 9px; border:none; background:transparent; border-radius:4px; cursor:pointer; font-family:Georgia,serif; font-size:13px; color:#555250; transition:all .14s; min-width:30px; display:flex; align-items:center; justify-content:center; }
+.tbtn:hover { background:rgba(255,255,255,0.06); color:#e2ddd6; }
+.tbtn.on { background:rgba(201,168,76,.12); color:#c9a84c; }
+.tsep { width:1px; background:rgba(255,255,255,0.06); margin:2px 4px; }
+.ed-area { min-height:420px; padding:24px; outline:none; background:#0e0c10; border:1px solid rgba(255,255,255,0.07); border-radius:0 0 8px 8px; font-family:Georgia,serif; font-size:17px; line-height:1.88; color:#c0bbb4; caret-color:#c9a84c; }
+.ed-area:empty:before { content:attr(data-ph); color:#2a2826; font-style:italic; pointer-events:none; }
+.ed-area p { margin-bottom:1.1em; }
+.ed-area h2 { font-size:24px; font-weight:600; color:#e2ddd6; margin:1.5em 0 .5em; }
+.ed-area blockquote { border-left:3px solid #c9a84c; padding-left:18px; margin:1.5em 0; font-style:italic; color:#555250; font-size:18px; }
+.ed-area ul,.ed-area ol { padding-left:26px; margin-bottom:1em; }
+.ed-area figure { margin:1.8em 0; }
+.ed-area figure img { width:100%; border-radius:6px; display:block; }
+.ed-area .video-wrap { position:relative; padding-bottom:56.25%; height:0; overflow:hidden; margin:1.4em 0; background:#0a0a0c; border-radius:6px; }
+.ed-area .video-wrap iframe { position:absolute; top:0; left:0; width:100%; height:100%; border:none; }
+.ed-hint { font-family:'Helvetica Neue',sans-serif; font-size:11px; color:#262422; margin-top:10px; }
+.spotify-ed-section { margin-top:32px; padding-top:24px; border-top:1px solid rgba(255,255,255,0.05); }
+.spotify-ed-label { font-family:'Helvetica Neue',sans-serif; font-size:10px; letter-spacing:4px; text-transform:uppercase; color:#3a3836; margin-bottom:8px; display:flex; align-items:center; gap:8px; }
+.spotify-ed-hint { font-size:11px; color:#282624; font-style:italic; font-family:'Helvetica Neue',sans-serif; margin-top:6px; }
+.spotify-preview { margin-top:14px; border-radius:12px; overflow:hidden; }
+.spotify-section { max-width:800px; margin:0 auto; padding:0 40px 64px; }
+.spotify-rule { display:flex; align-items:center; gap:14px; margin-bottom:26px; }
+.spotify-rule-line { flex:1; height:1px; background:rgba(255,255,255,0.05); }
+.spotify-rule-inner { display:flex; align-items:center; gap:9px; }
+.spotify-rule-label { font-family:'Helvetica Neue',sans-serif; font-size:10px; letter-spacing:4px; text-transform:uppercase; color:#383634; white-space:nowrap; }
+.spotify-embed-wrap { border-radius:12px; overflow:hidden; }
+
+/* MODALS */
+.modal-bg { position:fixed; inset:0; background:rgba(0,0,0,.78); z-index:500; display:flex; align-items:center; justify-content:center; }
+.modal { background:#18161a; border-radius:12px; padding:28px; width:480px; max-width:94vw; border:1px solid rgba(255,255,255,0.08); }
+.modal h3 { font-size:17px; color:#e2ddd6; margin-bottom:4px; }
+.modal-sub { font-size:13px; color:#484440; margin-bottom:18px; font-style:italic; }
+.modal-tabs { display:flex; gap:0; margin-bottom:18px; border-radius:6px; overflow:hidden; border:1px solid rgba(255,255,255,0.07); }
+.modal-tab { flex:1; padding:8px; background:transparent; border:none; cursor:pointer; font-size:12px; font-family:Georgia,serif; color:#555250; transition:all .15s; }
+.modal-tab.on { background:rgba(201,168,76,.12); color:#c9a84c; }
+.modal-field { width:100%; background:#0e0c10; border:1px solid rgba(255,255,255,0.08); border-radius:6px; padding:10px 14px; color:#e2ddd6; font-family:Georgia,serif; font-size:14px; outline:none; margin-bottom:10px; transition:border-color .18s; }
+.modal-field:focus { border-color:rgba(201,168,76,.4); }
+.modal-field::placeholder { color:#2a2826; font-style:italic; }
+.modal-prev { width:100%; height:150px; object-fit:cover; border-radius:6px; margin-bottom:10px; display:block; }
+.modal-btns { display:flex; gap:10px; justify-content:flex-end; margin-top:4px; }
+.upload-drop { width:100%; min-height:100px; border:1px dashed rgba(255,255,255,0.1); border-radius:6px; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:8px; cursor:pointer; margin-bottom:10px; transition:border-color .2s, background .2s; color:#484440; font-size:13px; font-style:italic; padding:20px; }
+.upload-drop:hover,.upload-drop.over { border-color:rgba(201,168,76,.35); background:rgba(201,168,76,.04); color:#706050; }
+.upload-drop input { display:none; }
+.upload-prog { width:100%; height:4px; background:rgba(255,255,255,0.06); border-radius:2px; margin-bottom:10px; overflow:hidden; }
+.upload-prog-bar { height:100%; background:#c9a84c; border-radius:2px; transition:width .2s; }
+
+/* FOOTER / ADMIN LINK */
+.footer-admin-link { font-family:'Helvetica Neue',sans-serif; font-size:10px; color:#1e1c1a; cursor:pointer; text-decoration:none; transition:color .2s; letter-spacing:.5px; }
+.footer-admin-link:hover { color:#3a3836; }
+`;
+
+// ── SPOTIFY ICON ──────────────────────────────────────────────
+const SpotifyIcon = () => (
+  <svg width="14" height="14" viewBox="0 0 24 24" fill="#1DB954">
+    <path d="M12 0C5.4 0 0 5.4 0 12s5.4 12 12 12 12-5.4 12-12S18.66 0 12 0zm5.521 17.34c-.24.359-.66.48-1.021.24-2.82-1.74-6.36-2.101-10.561-1.141-.418.122-.779-.179-.899-.539-.12-.421.18-.78.54-.9 4.56-1.021 8.52-.6 11.64 1.32.42.18.479.659.301 1.02zm1.44-3.3c-.301.42-.841.6-1.262.3-3.239-1.98-8.159-2.58-11.939-1.38-.479.12-1.02-.12-1.14-.6-.12-.48.12-1.021.6-1.141C9.6 9.9 15 10.561 18.72 12.84c.361.181.54.78.241 1.2zm.12-3.36C15.24 8.4 8.82 8.16 5.16 9.301c-.6.179-1.2-.181-1.38-.721-.18-.601.18-1.2.72-1.381 4.26-1.26 11.28-1.02 15.721 1.621.539.3.719 1.02.419 1.56-.299.421-1.02.599-1.559.3z"/>
+  </svg>
+);
+
+// ── IMAGE UPLOAD MODAL ────────────────────────────────────────
+function ImageModal({ onInsert, onClose }) {
+  const [tab, setTab]       = useState("upload"); // "upload" | "url"
+  const [url, setUrl]       = useState("");
+  const [cap, setCap]       = useState("");
+  const [showPrev, setShowPrev] = useState(false);
+  const [over, setOver]     = useState(false);
+  const [uploading, setUploading] = useState(false);
+  const [progress, setProgress]   = useState(0);
+  const [uploadedUrl, setUploadedUrl] = useState("");
+  const fileRef = useRef();
+
+  const handleFile = async (file) => {
+    if (!file || !file.type.startsWith("image/")) return;
+    setUploading(true); setProgress(0); setUploadedUrl("");
+    try {
+      const ext  = file.name.split(".").pop();
+      const path = `images/${Date.now()}_${Math.random().toString(36).substr(2,6)}.${ext}`;
+      const ref  = storage.ref(path);
+      const task = ref.put(file);
+      task.on("state_changed", snap => setProgress(Math.round(snap.bytesTransferred/snap.totalBytes*100)));
+      await task;
+      const dl = await ref.getDownloadURL();
+      setUploadedUrl(dl);
+    } catch(e) { alert("Upload failed: " + e.message); }
+    setUploading(false);
+  };
+
+  const handleDrop = e => {
+    e.preventDefault(); setOver(false);
+    handleFile(e.dataTransfer.files[0]);
+  };
+
+  const finalUrl = tab === "upload" ? uploadedUrl : url;
+
+  return (
+    <div className="modal-bg" onClick={onClose}>
+      <div className="modal" onClick={e => e.stopPropagation()}>
+        <h3>Insert photo</h3>
+        <p className="modal-sub">Upload from your computer or paste a URL</p>
+        <div className="modal-tabs">
+          <button className={`modal-tab${tab==="upload"?" on":""}`} onClick={()=>setTab("upload")}>⬆ Upload from laptop</button>
+          <button className={`modal-tab${tab==="url"?" on":""}`} onClick={()=>setTab("url")}>🔗 Paste URL</button>
+        </div>
+
+        {tab === "upload" && (
+          <>
+            {!uploadedUrl && !uploading && (
+              <div className={`upload-drop${over?" over":""}`}
+                onDragOver={e=>{e.preventDefault();setOver(true);}}
+                onDragLeave={()=>setOver(false)}
+                onDrop={handleDrop}
+                onClick={()=>fileRef.current.click()}>
+                <input type="file" ref={fileRef} accept="image/*" onChange={e=>handleFile(e.target.files[0])} />
+                <span style={{fontSize:28,opacity:.3}}>⬜</span>
+                <span>Click to choose a photo, or drag one here</span>
+                <span style={{fontSize:11,color:"#343230"}}>JPG, PNG, WEBP, GIF</span>
+              </div>
+            )}
+            {uploading && (
+              <div style={{marginBottom:10}}>
+                <div style={{fontSize:12,color:"#706050",marginBottom:6,fontFamily:"'Helvetica Neue',sans-serif"}}>Uploading… {progress}%</div>
+                <div className="upload-prog"><div className="upload-prog-bar" style={{width:`${progress}%`}} /></div>
+              </div>
+            )}
+            {uploadedUrl && (
+              <>
+                <img src={uploadedUrl} className="modal-prev" />
+                <button className="btn btn-ghost btn-xs" style={{marginBottom:10}} onClick={()=>{setUploadedUrl("");setProgress(0);}}>Change photo</button>
+              </>
+            )}
+          </>
+        )}
+
+        {tab === "url" && (
+          <>
+            {showPrev && url && <img src={url} className="modal-prev" onError={()=>setShowPrev(false)} />}
+            <input className="modal-field" placeholder="https://images.unsplash.com/…" value={url} onChange={e=>setUrl(e.target.value)} onBlur={()=>setShowPrev(true)} autoFocus={tab==="url"} />
+          </>
+        )}
+
+        <input className="modal-field" placeholder="Caption (optional)" value={cap} onChange={e=>setCap(e.target.value)} onKeyDown={e=>e.key==="Enter"&&finalUrl&&onInsert(finalUrl,cap)} />
+        <div className="modal-btns">
+          <button className="btn btn-outline btn-sm" onClick={onClose}>Cancel</button>
+          <button className="btn btn-gold btn-sm" disabled={!finalUrl||uploading} style={{opacity:finalUrl&&!uploading?1:.4,cursor:finalUrl&&!uploading?"pointer":"default"}} onClick={()=>finalUrl&&onInsert(finalUrl,cap)}>Insert photo</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── VIDEO MODAL ───────────────────────────────────────────────
+function VideoModal({ onInsert, onClose }) {
+  const [url, setUrl] = useState(""); const [cap, setCap] = useState("");
+  const embed = toVideoEmbed(url);
+  return (
+    <div className="modal-bg" onClick={onClose}>
+      <div className="modal" onClick={e=>e.stopPropagation()}>
+        <h3>Embed video</h3>
+        <p className="modal-sub">Paste a YouTube or Vimeo link</p>
+        <input className="modal-field" placeholder="https://www.youtube.com/watch?v=…" value={url} onChange={e=>setUrl(e.target.value)} autoFocus />
+        {embed && <div style={{position:"relative",paddingBottom:"42%",height:0,overflow:"hidden",borderRadius:6,marginBottom:12,background:"#0a0a0c"}}><iframe src={embed.src} style={{position:"absolute",top:0,left:0,width:"100%",height:"100%",border:"none"}} title="preview" /></div>}
+        <input className="modal-field" placeholder="Caption (optional)" value={cap} onChange={e=>setCap(e.target.value)} />
+        <div className="modal-btns">
+          <button className="btn btn-outline btn-sm" onClick={onClose}>Cancel</button>
+          <button className="btn btn-gold btn-sm" disabled={!embed} style={{opacity:embed?1:.4,cursor:embed?"pointer":"default"}} onClick={()=>onInsert(url,cap)}>Embed video</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── TOOLBAR ───────────────────────────────────────────────────
+function Toolbar({ editorRef, onUpdate }) {
+  const [fmt, setFmt]       = useState({});
+  const [imgModal, setImgModal] = useState(false);
+  const [vidModal, setVidModal] = useState(false);
+  const savedRange = useRef(null);
+  const exec = (cmd,val=null) => { document.execCommand(cmd,false,val); editorRef.current?.focus(); refresh(); onUpdate?.(); };
+  const refresh = () => setFmt({b:document.queryCommandState("bold"),i:document.queryCommandState("italic"),u:document.queryCommandState("underline"),ol:document.queryCommandState("insertOrderedList"),ul:document.queryCommandState("insertUnorderedList")});
+  const saveR   = () => { const s=window.getSelection(); if(s.rangeCount) savedRange.current=s.getRangeAt(0).cloneRange(); };
+  const restoreR= () => { if(savedRange.current){const s=window.getSelection();s.removeAllRanges();s.addRange(savedRange.current);} };
+  const openImg = () => { saveR(); setImgModal(true); };
+  const insertImg = (url,cap) => {
+    if (!url){setImgModal(false);return;}
+    setImgModal(false); editorRef.current?.focus(); restoreR();
+    document.execCommand("insertHTML",false,`<figure><img src="${url}" alt="${cap||""}" />${cap?`<figcaption>${cap}</figcaption>`:""}</figure><p><br></p>`);
+    onUpdate?.();
+  };
+  const openVid = () => { saveR(); setVidModal(true); };
+  const insertVid = (url,cap) => {
+    if (!url){setVidModal(false);return;}
+    const embed=toVideoEmbed(url); if(!embed){setVidModal(false);return;}
+    setVidModal(false); editorRef.current?.focus(); restoreR();
+    document.execCommand("insertHTML",false,`<div class="video-wrap"><iframe src="${embed.src}" allowfullscreen title="${embed.label}"></iframe></div>${cap?`<p class="video-cap">${cap}</p>`:""}<p><br></p>`);
+    onUpdate?.();
+  };
+  const T = ({t,on,fn,ch}) => <button title={t} className={`tbtn${on?" on":""}`} onMouseDown={e=>{e.preventDefault();fn();}}>{ch}</button>;
+  return (
+    <>
+      <div className="toolbar" onMouseUp={refresh}>
+        <T t="Bold" on={fmt.b} fn={()=>exec("bold")} ch={<b>B</b>} />
+        <T t="Italic" on={fmt.i} fn={()=>exec("italic")} ch={<em>I</em>} />
+        <T t="Underline" on={fmt.u} fn={()=>exec("underline")} ch={<u>U</u>} />
+        <div className="tsep" />
+        <T t="H2" on={false} fn={()=>exec("formatBlock","H2")} ch="H2" />
+        <T t="H3" on={false} fn={()=>exec("formatBlock","H3")} ch="H3" />
+        <T t="¶" on={false} fn={()=>exec("formatBlock","P")} ch="¶" />
+        <div className="tsep" />
+        <T t="Blockquote" on={false} fn={()=>{const s=window.getSelection();if(!s.rangeCount)return;const r=s.getRangeAt(0),bq=document.createElement("blockquote");bq.appendChild(s.isCollapsed?document.createTextNode("Quote…"):r.extractContents());r.insertNode(bq);s.collapse(bq,1);onUpdate?.();}} ch={'"'} />
+        <T t="Bullets" on={fmt.ul} fn={()=>exec("insertUnorderedList")} ch="• —" />
+        <T t="Numbers" on={fmt.ol} fn={()=>exec("insertOrderedList")} ch="1." />
+        <div className="tsep" />
+        <T t="Insert photo" on={false} fn={openImg} ch="⬜ Photo" />
+        <T t="Embed video" on={false} fn={openVid} ch="▶ Video" />
+        <T t="Link" on={false} fn={()=>{const u=prompt("URL:");if(u)exec("createLink",u);}} ch="⌁" />
+        <div className="tsep" />
+        <T t="Divider" on={false} fn={()=>exec("insertHorizontalRule")} ch="——" />
+        <T t="Undo" on={false} fn={()=>exec("undo")} ch="↩" />
+        <T t="Redo" on={false} fn={()=>exec("redo")} ch="↪" />
+      </div>
+      {imgModal && <ImageModal onInsert={insertImg} onClose={()=>setImgModal(false)} />}
+      {vidModal && <VideoModal onInsert={insertVid} onClose={()=>setVidModal(false)} />}
+    </>
+  );
+}
+
+// ── COVER UPLOAD ──────────────────────────────────────────────
+// Shared component used in Editor for the cover photo zone
+function CoverUpload({ cover, onCover }) {
+  const [coverOk, setCoverOk]   = useState(!!cover);
+  const [showUrl, setShowUrl]   = useState(!cover);
+  const [uploading, setUploading] = useState(false);
+  const [progress, setProgress]   = useState(0);
+  const [over, setOver]           = useState(false);
+  const fileRef = useRef();
+
+  const handleFile = async file => {
+    if (!file || !file.type.startsWith("image/")) return;
+    setUploading(true); setProgress(0);
+    try {
+      const ext  = file.name.split(".").pop();
+      const path = `covers/${Date.now()}_${Math.random().toString(36).substr(2,6)}.${ext}`;
+      const ref  = storage.ref(path);
+      const task = ref.put(file);
+      task.on("state_changed", snap => setProgress(Math.round(snap.bytesTransferred/snap.totalBytes*100)));
+      await task;
+      const dl = await ref.getDownloadURL();
+      onCover(dl); setCoverOk(true); setShowUrl(false);
+    } catch(e) { alert("Upload failed: "+e.message); }
+    setUploading(false);
+  };
+
+  return (
+    <>
+      <div className="cover-zone">
+        {cover && coverOk ? (
+          <>
+            <img src={cover} className="cover-preview" onError={()=>setCoverOk(false)} />
+            <div className="cover-change-btns">
+              <button className="btn btn-ghost btn-xs" onClick={()=>fileRef.current.click()}>⬆ Upload new</button>
+              <button className="btn btn-ghost btn-xs" onClick={()=>setShowUrl(v=>!v)}>🔗 URL</button>
+            </div>
+          </>
+        ) : uploading ? (
+          <div style={{width:"100%",height:160,background:"#141316",borderRadius:10,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",gap:10}}>
+            <div style={{fontSize:12,color:"#706050",fontFamily:"'Helvetica Neue',sans-serif"}}>Uploading cover… {progress}%</div>
+            <div className="upload-prog" style={{width:"60%"}}><div className="upload-prog-bar" style={{width:`${progress}%`}} /></div>
+          </div>
+        ) : (
+          <div className={`cover-placeholder${over?" over":""}`}
+            onDragOver={e=>{e.preventDefault();setOver(true);}}
+            onDragLeave={()=>setOver(false)}
+            onDrop={e=>{e.preventDefault();setOver(false);handleFile(e.dataTransfer.files[0]);}}
+            onClick={()=>fileRef.current.click()}>
+            <div style={{fontSize:24,opacity:.25}}>⬜</div>
+            <span>Click or drag to upload a cover photo</span>
+            <span style={{fontSize:11,color:"#2e2c2a"}}>or paste a URL below</span>
+          </div>
+        )}
+        <input type="file" ref={fileRef} accept="image/*" style={{display:"none"}} onChange={e=>handleFile(e.target.files[0])} />
+      </div>
+      {(showUrl || (!cover && !uploading)) && (
+        <div className="cover-url-wrap">
+          <input className="ef ef-url" placeholder="…or paste image URL here" value={cover} onChange={e=>{onCover(e.target.value);setCoverOk(true);}} onBlur={()=>{if(cover)setShowUrl(false);}} />
+        </div>
+      )}
+    </>
+  );
+}
+
+// ── EDITOR ────────────────────────────────────────────────────
+function Editor({ article, onSave, onCancel }) {
+  const [title,    setTitle]    = useState(article?.title||"");
+  const [subtitle, setSubtitle] = useState(article?.subtitle||"");
+  const [location, setLocation] = useState(article?.location||"");
+  const [date,     setDate]     = useState(article?.date||new Date().toISOString().split("T")[0]);
+  const [cover,    setCover]    = useState(article?.coverImage||"");
+  const [spotifyUrl, setSpotifyUrl] = useState(article?.spotifyUrl||"");
+  const editorRef = useRef(null);
+  useEffect(()=>{ if(editorRef.current) editorRef.current.innerHTML=article?.content||""; },[]);
+  const save = status => onSave({...article, id:article?.id||genId(), title, subtitle, location, date, coverImage:cover, spotifyUrl, content:editorRef.current?.innerHTML||"", status, createdAt:article?.createdAt||new Date().toISOString(), updatedAt:new Date().toISOString()});
+  const spotifyEmbed = toSpotifyEmbed(spotifyUrl);
+  return (
+    <div className="ed">
+      <div className="ed-top">
+        <span className="ed-label">{article?.id?"Edit Article":"New Article"}</span>
+        <div className="ed-actions">
+          <button className="btn btn-outline btn-sm" onClick={onCancel}>Cancel</button>
+          <button className="btn btn-outline btn-sm" onClick={()=>save("draft")}>Save draft</button>
+          <button className="btn btn-gold btn-sm" onClick={()=>save("published")}>Publish</button>
+        </div>
+      </div>
+      <CoverUpload cover={cover} onCover={setCover} />
+      <input className="ef ef-title" placeholder="Article title" value={title} onChange={e=>setTitle(e.target.value)} />
+      <input className="ef ef-sub" placeholder="Subtitle…" value={subtitle} onChange={e=>setSubtitle(e.target.value)} />
+      <div className="ef-meta-row">
+        <input className="ef" style={{textTransform:"uppercase",letterSpacing:"1px"}} placeholder="Location" value={location} onChange={e=>setLocation(e.target.value)} />
+        <input className="ef" type="date" value={date} onChange={e=>setDate(e.target.value)} />
+      </div>
+      <div className="ed-spacer" />
+      <Toolbar editorRef={editorRef} onUpdate={()=>{}} />
+      <div ref={editorRef} contentEditable suppressContentEditableWarning className="ed-area" data-ph="Begin writing your dispatch…" />
+      <p className="ed-hint">⬜ Photo uploads from your laptop or URL · ▶ Video embeds YouTube/Vimeo · Ctrl+B bold · Ctrl+I italic</p>
+      <div className="spotify-ed-section">
+        <div className="spotify-ed-label"><SpotifyIcon /> Soundtrack</div>
+        <input className="ef ef-url" placeholder="Spotify playlist, album, or track URL (optional)" value={spotifyUrl} onChange={e=>setSpotifyUrl(e.target.value)} />
+        <p className="spotify-ed-hint">e.g. https://open.spotify.com/playlist/…</p>
+        {spotifyEmbed && <div className="spotify-preview"><iframe src={spotifyEmbed} width="100%" height="152" frameBorder="0" allow="autoplay; clipboard-write; encrypted-media; fullscreen; picture-in-picture" loading="lazy" style={{borderRadius:12}} title="Spotify preview" /></div>}
+      </div>
+    </div>
+  );
+}
+
+// ── CAROUSEL ──────────────────────────────────────────────────
+function Carousel({ articles, onArticle, isOwner, openNew }) {
+  const [idx, setIdx]         = useState(0);
+  const [progress, setProgress] = useState(0);
+  const [animating, setAnimating] = useState(false);
+  const timerRef = useRef(null);
+  const pubs = articles.filter(a=>a.status==="published"&&a.coverImage);
+  const displayed = pubs.length>0 ? pubs : articles.filter(a=>a.status==="published");
+
+  const goTo = useCallback(i => {
+    setIdx(i); setProgress(0); setAnimating(false); clearTimeout(timerRef.current);
+    setTimeout(()=>{setProgress(100);setAnimating(true);},60);
+    timerRef.current = setTimeout(()=>goTo((i+1)%Math.max(displayed.length,1)),5600);
+  },[displayed.length]);
+
+  useEffect(()=>{
+    if(!displayed.length) return;
+    setProgress(0); setAnimating(false);
+    const t1=setTimeout(()=>{setProgress(100);setAnimating(true);},80);
+    timerRef.current=setTimeout(()=>goTo(1%displayed.length),5600);
+    return ()=>{clearTimeout(t1);clearTimeout(timerRef.current);};
+  },[displayed.length]);
+
+  if(!displayed.length) return (
+    <div style={{height:"60vh",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",gap:16,background:"#0a0a0c"}}>
+      <p style={{fontStyle:"italic",color:"#2a2826",fontSize:22}}>Your journey begins here.</p>
+      {isOwner && <button className="btn btn-gold" onClick={openNew}>Write your first article</button>}
+    </div>
+  );
+
+  return (
+    <div className="carousel">
+      {displayed.map((a,i)=>(
+        <div key={a.id} className={`carousel-slide${i===idx%displayed.length?" active":""}`} onClick={()=>onArticle(a)}>
+          {a.coverImage && <img src={a.coverImage} alt="" />}
+          <div className="carousel-grad" />
+          {a.date && <span className="carousel-date">{fmtDate(a.date)}</span>}
+          <div className="carousel-body">
+            {a.location && <span className="carousel-loc">{a.location}</span>}
+            <h2 className="carousel-title">{a.title||"Untitled"}</h2>
+            {a.subtitle && <p className="carousel-sub">{a.subtitle}</p>}
+            <button className="carousel-read" onClick={e=>{e.stopPropagation();onArticle(a);}}>Read article →</button>
+          </div>
+        </div>
+      ))}
+      <div className={`carousel-progress${animating?" animating":""}`} style={{width:`${progress}%`}} />
+      {displayed.length>1 && <div className="carousel-dots">{displayed.map((_,i)=><button key={i} className={`cdot${i===idx%displayed.length?" on":""}`} onClick={e=>{e.stopPropagation();goTo(i);}} />)}</div>}
+      {displayed.length>1 && <>
+        <button className="carousel-arr prev" onClick={e=>{e.stopPropagation();goTo((idx-1+displayed.length)%displayed.length);}}>‹</button>
+        <button className="carousel-arr next" onClick={e=>{e.stopPropagation();goTo((idx+1)%displayed.length);}}>›</button>
+      </>}
+    </div>
+  );
+}
+
+// ── GRID CARD ─────────────────────────────────────────────────
+function GridCard({ article, onClick }) {
+  return (
+    <div className="card" onClick={()=>onClick(article)}>
+      <div className="card-img">{article.coverImage?<img src={article.coverImage} alt="" />:<div className="card-no-img">✈</div>}</div>
+      <div className="card-body">
+        {article.location && <div className="card-loc">{article.location}</div>}
+        <h3 className="card-title">{article.title||"Untitled"}</h3>
+        <p className="card-sub">{article.subtitle||exc(article.content||"")}</p>
+        {article.date && <div className="card-date">{fmtShort(article.date)}</div>}
+      </div>
+    </div>
+  );
+}
+
+// ── HOME ──────────────────────────────────────────────────────
+function Home({ articles, onArticle, isOwner, onPublish, onDelete }) {
+  const pub    = [...articles].filter(a=>a.status==="published").sort((a,b)=>new Date(b.date)-new Date(a.date));
+  const drafts = [...articles].filter(a=>a.status==="draft").sort((a,b)=>new Date(b.updatedAt||0)-new Date(a.updatedAt||0));
+  return (
+    <div className="home">
+      {pub.length===0
+        ? <div className="empty"><p className="empty-head">No published articles yet.</p>{isOwner&&<p className="empty-sub">Write your first dispatch and hit Publish.</p>}</div>
+        : <><div className="section-label">All Dispatches</div><div className="grid">{pub.map(a=><GridCard key={a.id} article={a} onClick={onArticle} />)}</div></>}
+      {isOwner && drafts.length>0 && (
+        <div className="drafts">
+          <div className="drafts-divider"><div className="drafts-divider-line" /><span className="drafts-divider-label">Drafts</span><div className="drafts-divider-line" /></div>
+          {drafts.map(a=>(
+            <div key={a.id} className="draft-row" onClick={()=>onArticle(a)}>
+              <div className="dr-left">
+                {a.coverImage?<img src={a.coverImage} className="dr-thumb" onError={e=>e.target.style.display="none"} />:<div className="dr-thumb-empty" />}
+                <div>
+                  <div className={`dr-title${!a.title?" empty":""}`}>{a.title||"Untitled draft"}</div>
+                  {a.location&&<div className="dr-loc">{a.location}</div>}
+                </div>
+              </div>
+              <div className="dr-right">
+                {a.date&&<span className="dr-date">{fmtShort(a.date)}</span>}
+                <button className="btn btn-outline btn-xs" onClick={e=>{e.stopPropagation();onPublish(a);}}>Publish</button>
+                <button className="btn btn-red btn-xs" onClick={e=>{e.stopPropagation();if(confirm("Delete draft?"))onDelete(a.id);}}>✕</button>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── ARTICLE VIEW ──────────────────────────────────────────────
+function ArticleView({ article, onEdit, onBack, onToggle, onDelete, isOwner }) {
+  const hasImg = !!article.coverImage;
+  const spotifyEmbed = toSpotifyEmbed(article.spotifyUrl||"");
+  return (
+    <div>
+      {hasImg ? (
+        <div className="av-hero"><img src={article.coverImage} alt="" /><div className="av-hero-grad" /><div className="av-hero-text">{article.location&&<span className="av-loc">{article.location}</span>}<h1 className="av-title">{article.title||"Untitled"}</h1>{article.subtitle&&<p className="av-sub">{article.subtitle}</p>}</div></div>
+      ) : (
+        <div className="av-no-hero-text">{article.location&&<span className="av-loc">{article.location}</span>}<h1 className="av-title onpage">{article.title||"Untitled"}</h1>{article.subtitle&&<p className="av-sub onpage">{article.subtitle}</p>}</div>
+      )}
+      <div className="av-bar">
+        <div className="av-bar-l">
+          <button className="btn btn-ghost btn-sm" onClick={onBack}>← All</button>
+          {article.date && <span className="av-date">{fmtDate(article.date)}</span>}
+          {isOwner && <span className={`av-status ${article.status==="published"?"pub":"draft"}`}>{article.status}</span>}
+        </div>
+        {isOwner && (
+          <div className="av-bar-r">
+            <button className="btn btn-outline btn-sm" onClick={()=>onToggle(article)}>{article.status==="published"?"Unpublish":"Publish"}</button>
+            <button className="btn btn-outline btn-sm" onClick={()=>onEdit(article)}>Edit</button>
+            <button className="btn btn-red btn-sm" onClick={()=>{if(confirm("Delete this article permanently?"))onDelete(article.id);}}>Delete</button>
+          </div>
+        )}
+      </div>
+      <div className="av-content">
+        <div className="av-body" dangerouslySetInnerHTML={{__html:article.content||"<p>No content yet.</p>"}} />
+      </div>
+      {spotifyEmbed && (
+        <div className="spotify-section">
+          <div className="spotify-rule">
+            <div className="spotify-rule-line" />
+            <div className="spotify-rule-inner">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="#1DB954"><path d="M12 0C5.4 0 0 5.4 0 12s5.4 12 12 12 12-5.4 12-12S18.66 0 12 0zm5.521 17.34c-.24.359-.66.48-1.021.24-2.82-1.74-6.36-2.101-10.561-1.141-.418.122-.779-.179-.899-.539-.12-.421.18-.78.54-.9 4.56-1.021 8.52-.6 11.64 1.32.42.18.479.659.301 1.02zm1.44-3.3c-.301.42-.841.6-1.262.3-3.239-1.98-8.159-2.58-11.939-1.38-.479.12-1.02-.12-1.14-.6-.12-.48.12-1.021.6-1.141C9.6 9.9 15 10.561 18.72 12.84c.361.181.54.78.241 1.2zm.12-3.36C15.24 8.4 8.82 8.16 5.16 9.301c-.6.179-1.2-.181-1.38-.721-.18-.601.18-1.2.72-1.381 4.26-1.26 11.28-1.02 15.721 1.621.539.3.719 1.02.419 1.56-.299.421-1.02.599-1.559.3z"/></svg>
+              <span className="spotify-rule-label">Soundtrack</span>
+            </div>
+            <div className="spotify-rule-line" />
+          </div>
+          <div className="spotify-embed-wrap">
+            <iframe src={spotifyEmbed} width="100%" height="352" frameBorder="0" allow="autoplay; clipboard-write; encrypted-media; fullscreen; picture-in-picture" loading="lazy" style={{borderRadius:12}} title="Spotify playlist" />
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── NAV AUTH MENU ─────────────────────────────────────────────
+function NavAuth({ user, isOwner, onSignIn, onSignOut, onNew }) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef(null);
+  const uidUnset = OWNER_UID === "PASTE_YOUR_UID_HERE";
+
+  useEffect(()=>{
+    const h = e => { if(ref.current && !ref.current.contains(e.target)) setOpen(false); };
+    document.addEventListener("mousedown", h);
+    return ()=>document.removeEventListener("mousedown", h);
+  },[]);
+
+  const copyUid = () => {
+    if (user?.uid) { navigator.clipboard.writeText(user.uid).catch(()=>{}); alert("UID copied! Paste it into your index.html as OWNER_UID, then redeploy."); }
+  };
+
+  if (!user) return null; // signed-out users see nothing — sign-in is via footer link
+
+  return (
+    <div style={{position:"relative"}} ref={ref}>
+      {isOwner && <button className="btn btn-gold btn-sm" onClick={onNew} style={{marginRight:6}}>+ New</button>}
+      <img
+        src={user.photoURL||`https://ui-avatars.com/api/?name=${encodeURIComponent(user.displayName||"U")}&background=${isOwner?"c9a84c":"1a1818"}&color=${isOwner?"0a0a0c":"484440"}&size=60`}
+        className="auth-avatar"
+        style={!isOwner?{opacity:.5,borderColor:"rgba(255,255,255,0.06)"}:{}}
+        alt="" onClick={()=>setOpen(v=>!v)}
+      />
+      {open && (
+        <div className="auth-menu">
+          <div className="auth-menu-user">
+            <div className="auth-menu-name">{user.displayName}</div>
+            <div className="auth-menu-email">{user.email}</div>
+            {/* Always show UID if OWNER_UID not yet set, so they can copy it */}
+            {(uidUnset || isOwner) && (
+              <div className="auth-menu-uid" onClick={copyUid} title="Click to copy">
+                <div className="auth-menu-uid-label">{uidUnset ? "⚠ Copy your UID → paste into file" : "Your UID"}</div>
+                {user.uid}
+              </div>
+            )}
+            {!isOwner && !uidUnset && <div style={{fontSize:10,color:"#706050",marginTop:4,fontFamily:"'Helvetica Neue',sans-serif",letterSpacing:"1px"}}>VIEW ONLY</div>}
+          </div>
+          <button className="auth-menu-btn danger" onClick={()=>{onSignOut();setOpen(false);}}>
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4M16 17l5-5-5-5M21 12H9"/></svg>
+            Sign out
+          </button>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── APP ───────────────────────────────────────────────────────
+function App() {
+  const [articles, setArticles] = useState([]);
+  const [ready,    setReady]    = useState(false);
+  const [view,     setView]     = useState("home");
+  const [selected, setSelected] = useState(null);
+  const [scrolled, setScrolled] = useState(false);
+  const [user,     setUser]     = useState(null);
+
+  const isOwner = !!(user && OWNER_UID !== "PASTE_YOUR_UID_HERE" && user.uid === OWNER_UID);
+
+  useEffect(()=>{ return auth.onAuthStateChanged(u=>setUser(u)); },[]);
+
+  useEffect(()=>{
+    const onScroll = ()=>setScrolled(window.scrollY>50);
+    window.addEventListener("scroll",onScroll,{passive:true});
+    const listener = db.on("value", snap=>{
+      const data=snap.val();
+      setArticles(data ? Object.keys(data).map(k=>({...data[k],id:k})).sort((a,b)=>new Date(b.date||0)-new Date(a.date||0)) : []);
+      setReady(true);
+      const ld=document.getElementById("loading");
+      if(ld){ld.style.opacity="0";setTimeout(()=>ld.remove(),400);}
+    });
+    return ()=>{ window.removeEventListener("scroll",onScroll); db.off("value",listener); };
+  },[]);
+
+  const signIn  = ()=>{ const p=new firebase.auth.GoogleAuthProvider(); auth.signInWithPopup(p).catch(e=>alert("Sign in failed: "+e.message)); };
+  const signOut = ()=>auth.signOut();
+
+  const handleSave = art => {
+    if(!isOwner) return;
+    const id=art.id||genId();
+    const na={...art,id,updatedAt:new Date().toISOString(),createdAt:art.createdAt||new Date().toISOString(),status:art.status||"draft"};
+    db.child(id).set(na).then(()=>{setSelected(na);setView("article");window.scrollTo(0,0);});
+  };
+  const handleToggle = art => {
+    if(!isOwner) return;
+    const u={...art,status:art.status==="published"?"draft":"published",updatedAt:new Date().toISOString()};
+    db.child(art.id).update({status:u.status,updatedAt:u.updatedAt});
+    setSelected(u);
+  };
+  const handleDelete  = id=>{ if(!isOwner)return; db.child(id).remove().then(()=>{setView("home");setSelected(null);}); };
+  const handlePublish = art=>{ if(!isOwner)return; db.child(art.id).update({status:"published",updatedAt:new Date().toISOString()}); };
+  const openArticle   = a=>{ setSelected(a);setView("article");window.scrollTo(0,0); };
+  const openNew       = ()=>{ if(!isOwner)return; setSelected(null);setView("editor");window.scrollTo(0,0); };
+  const goHome        = ()=>{ setView("home");window.scrollTo(0,0); };
+
+  if(!ready) return null;
+
+  return (
+    <div className="app">
+      <style>{CSS}</style>
+
+      {/* ── NAV ── */}
+      <nav className={`nav${scrolled?" scrolled":""}`}>
+        <div className="nav-logo" onClick={goHome}>ATLAS<em>.</em></div>
+        <div className="nav-right">
+          <NavAuth user={user} isOwner={isOwner} onSignIn={signIn} onSignOut={signOut} onNew={openNew} />
+        </div>
+      </nav>
+
+      {/* ── VIEWS ── */}
+      {view==="home" && <>
+        <Carousel articles={articles} onArticle={openArticle} isOwner={isOwner} openNew={openNew} />
+        <Home articles={articles} onArticle={openArticle} isOwner={isOwner} onPublish={handlePublish} onDelete={handleDelete} />
+
+        {/* Tiny, invisible-to-strangers admin sign-in link in the footer area */}
+        <div style={{textAlign:"center",padding:"28px 0 40px",borderTop:"1px solid rgba(255,255,255,0.03)"}}>
+          <span style={{fontFamily:"'Helvetica Neue',sans-serif",fontSize:11,color:"#1a1816",letterSpacing:.5}}>
+            © {new Date().getFullYear()} Atlas Journal
+          </span>
+          {!user && (
+            <span>&nbsp;·&nbsp;
+              <span className="footer-admin-link" onClick={signIn} title="Admin">·</span>
+            </span>
+          )}
+        </div>
+      </>}
+
+      {view==="article" && selected && <>
+        <ArticleView article={selected} isOwner={isOwner}
+          onBack={goHome}
+          onEdit={a=>{if(isOwner){setSelected(a);setView("editor");window.scrollTo(0,0);}}}
+          onToggle={handleToggle}
+          onDelete={handleDelete} />
+        <div style={{textAlign:"center",padding:"28px 0 40px",borderTop:"1px solid rgba(255,255,255,0.03)"}}>
+          <span style={{fontFamily:"'Helvetica Neue',sans-serif",fontSize:11,color:"#1a1816"}}>© {new Date().getFullYear()} Atlas Journal</span>
+        </div>
+      </>}
+
+      {view==="editor" && isOwner && (
+        <Editor article={selected} onSave={handleSave} onCancel={()=>setView(selected?"article":"home")} />
+      )}
+    </div>
+  );
+}
+
+ReactDOM.createRoot(document.getElementById("root")).render(<App />);
+</script>
+</body>
+</html>
