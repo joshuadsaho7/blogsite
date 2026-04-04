@@ -25,7 +25,7 @@
 <div id="root"></div>
 <script type="text/babel">
 const { useState, useEffect, useRef, useCallback } = React;
-
+ 
 // ── FIREBASE ──────────────────────────────────────────────────
 const firebaseConfig = {
   apiKey: "AIzaSyAbBZ8_R19NotMTtHfJn-Olf9_dkNsrkcY",
@@ -40,19 +40,19 @@ if (!firebase.apps.length) firebase.initializeApp(firebaseConfig);
 const db      = firebase.database().ref("articles");
 const auth    = firebase.auth();
 const storage = firebase.storage();
-
+ 
 // ── OWNER UID ─────────────────────────────────────────────────
 // After signing in for the first time, your UID will be shown
 // in the admin menu. Paste it here, then redeploy.
 const OWNER_UID = "PASTE_YOUR_UID_HERE";
-
+ 
 // ── HELPERS ───────────────────────────────────────────────────
 const genId    = () => Math.random().toString(36).substr(2, 9);
 const fmtDate  = d => d ? new Date(d+"T12:00:00").toLocaleDateString("en-US",{year:"numeric",month:"long",day:"numeric"}) : "";
 const fmtShort = d => d ? new Date(d+"T12:00:00").toLocaleDateString("en-US",{month:"short",day:"numeric",year:"numeric"}) : "";
 const strip    = h => { const d=document.createElement("div"); d.innerHTML=h; return d.textContent||""; };
 const exc      = (h,n=100) => { const t=strip(h); return t.length>n?t.slice(0,n)+"…":t; };
-
+ 
 const toVideoEmbed = url => {
   if (!url) return null;
   const yt = url.match(/(?:youtube\.com\/watch\?v=|youtu\.be\/)([a-zA-Z0-9_-]{11})/);
@@ -66,7 +66,7 @@ const toSpotifyEmbed = url => {
   const m = url.match(/spotify\.com\/(playlist|album|track|artist)\/([a-zA-Z0-9]+)/);
   return m ? `https://open.spotify.com/embed/${m[1]}/${m[2]}?utm_source=generator&theme=0` : null;
 };
-
+ 
 // Upload a File object to Firebase Storage, return download URL
 async function uploadToStorage(file) {
   const ext  = file.name.split(".").pop();
@@ -75,18 +75,18 @@ async function uploadToStorage(file) {
   await ref.put(file);
   return await ref.getDownloadURL();
 }
-
+ 
 // ── CSS ───────────────────────────────────────────────────────
 const CSS = `
 .app { background: #0a0a0c; min-height: 100vh; color: #e2ddd6; font-family: Georgia,serif; }
-
+ 
 /* NAV */
 .nav { position: fixed; top:0; left:0; right:0; z-index:200; display:flex; align-items:center; justify-content:space-between; padding:0 36px; height:56px; background:rgba(10,10,12,0); transition:all .35s; }
 .nav.scrolled { background:rgba(10,10,12,0.94); backdrop-filter:blur(20px); border-bottom:1px solid rgba(255,255,255,0.05); }
 .nav-logo { font-size:13px; font-weight:600; letter-spacing:8px; text-transform:uppercase; cursor:pointer; color:#e2ddd6; user-select:none; }
 .nav-logo em { color:#c9a84c; font-style:normal; }
 .nav-right { display:flex; align-items:center; gap:12px; }
-
+ 
 /* AUTH */
 .auth-avatar { width:30px; height:30px; border-radius:50%; object-fit:cover; border:1.5px solid rgba(201,168,76,0.35); cursor:pointer; transition:border-color .2s; }
 .auth-avatar:hover { border-color:#c9a84c; }
@@ -101,7 +101,7 @@ const CSS = `
 .auth-menu-btn:hover { background:rgba(255,255,255,0.05); color:#e2ddd6; }
 .auth-menu-btn.danger { color:#a05050; }
 .auth-menu-btn.danger:hover { background:rgba(160,80,80,0.08); color:#c06060; }
-
+ 
 /* BUTTONS */
 .btn { display:inline-flex; align-items:center; gap:5px; padding:8px 18px; border-radius:7px; font-size:12px; cursor:pointer; font-family:Georgia,serif; letter-spacing:.3px; transition:all .18s; border:none; line-height:1; font-weight:700; }
 .btn-gold { background:#c9a84c; color:#0a0a0c; }
@@ -114,7 +114,7 @@ const CSS = `
 .btn-red:hover { background:rgba(160,80,80,0.1); border-color:rgba(160,80,80,0.4); }
 .btn-sm { padding:7px 15px; font-size:12px; border-radius:6px; }
 .btn-xs { padding:4px 10px; font-size:11px; border-radius:4px; }
-
+ 
 /* CAROUSEL */
 .carousel { position:relative; height:100vh; min-height:560px; max-height:860px; overflow:hidden; background:#0a0a0c; cursor:pointer; }
 .carousel-slide { position:absolute; inset:0; opacity:0; transition:opacity 1.1s ease; pointer-events:none; }
@@ -138,7 +138,7 @@ const CSS = `
 .carousel-arr.next { right:24px; }
 .carousel-progress { position:absolute; bottom:0; left:0; height:2px; background:#c9a84c; transition:none; }
 .carousel-progress.animating { transition:width 5.5s linear; }
-
+ 
 /* HOME */
 .home { max-width:1180px; margin:0 auto; padding:48px 24px 80px; }
 .section-label { font-family:'Helvetica Neue',sans-serif; font-size:10px; letter-spacing:4px; text-transform:uppercase; color:#383634; margin-bottom:22px; padding-bottom:16px; border-bottom:1px solid rgba(255,255,255,0.05); }
@@ -157,7 +157,7 @@ const CSS = `
 .card:hover .card-title { color:#c9a84c; }
 .card-sub { font-size:13px; font-style:italic; color:#525050; line-height:1.6; flex:1; margin-bottom:12px; }
 .card-date { font-family:'Helvetica Neue',sans-serif; font-size:10px; color:#383634; }
-
+ 
 /* DRAFTS */
 .drafts { margin-top:48px; }
 .drafts-divider { display:flex; align-items:center; gap:16px; margin-bottom:20px; }
@@ -176,7 +176,7 @@ const CSS = `
 .empty { text-align:center; padding:80px 0; }
 .empty-head { font-size:22px; font-style:italic; color:#252322; margin-bottom:10px; }
 .empty-sub { font-size:14px; color:#1e1c1a; }
-
+ 
 /* ARTICLE VIEW */
 .av-hero { position:relative; height:clamp(320px,52vh,620px); overflow:hidden; background:#0e0c10; }
 .av-hero img { width:100%; height:100%; object-fit:cover; display:block; }
@@ -211,7 +211,7 @@ const CSS = `
 .av-body figcaption { font-size:12px; font-family:'Helvetica Neue',sans-serif; color:#484440; text-align:center; margin-top:10px; padding:0 40px; font-style:italic; }
 .av-body .video-wrap { position:relative; padding-bottom:56.25%; height:0; overflow:hidden; margin:2.8em -40px; }
 .av-body .video-wrap iframe { position:absolute; top:0; left:0; width:100%; height:100%; border:none; }
-
+ 
 /* EDITOR */
 .ed { max-width:880px; margin:0 auto; padding:80px 28px 80px; }
 .ed-top { display:flex; justify-content:space-between; align-items:center; margin-bottom:32px; padding-bottom:20px; border-bottom:1px solid rgba(255,255,255,0.05); }
@@ -258,7 +258,7 @@ const CSS = `
 .spotify-rule-inner { display:flex; align-items:center; gap:9px; }
 .spotify-rule-label { font-family:'Helvetica Neue',sans-serif; font-size:10px; letter-spacing:4px; text-transform:uppercase; color:#383634; white-space:nowrap; }
 .spotify-embed-wrap { border-radius:12px; overflow:hidden; }
-
+ 
 /* MODALS */
 .modal-bg { position:fixed; inset:0; background:rgba(0,0,0,.78); z-index:500; display:flex; align-items:center; justify-content:center; }
 .modal { background:#18161a; border-radius:12px; padding:28px; width:480px; max-width:94vw; border:1px solid rgba(255,255,255,0.08); }
@@ -277,19 +277,19 @@ const CSS = `
 .upload-drop input { display:none; }
 .upload-prog { width:100%; height:4px; background:rgba(255,255,255,0.06); border-radius:2px; margin-bottom:10px; overflow:hidden; }
 .upload-prog-bar { height:100%; background:#c9a84c; border-radius:2px; transition:width .2s; }
-
+ 
 /* FOOTER / ADMIN LINK */
 .footer-admin-link { font-family:'Helvetica Neue',sans-serif; font-size:10px; color:#1e1c1a; cursor:pointer; text-decoration:none; transition:color .2s; letter-spacing:.5px; }
 .footer-admin-link:hover { color:#3a3836; }
 `;
-
+ 
 // ── SPOTIFY ICON ──────────────────────────────────────────────
 const SpotifyIcon = () => (
   <svg width="14" height="14" viewBox="0 0 24 24" fill="#1DB954">
     <path d="M12 0C5.4 0 0 5.4 0 12s5.4 12 12 12 12-5.4 12-12S18.66 0 12 0zm5.521 17.34c-.24.359-.66.48-1.021.24-2.82-1.74-6.36-2.101-10.561-1.141-.418.122-.779-.179-.899-.539-.12-.421.18-.78.54-.9 4.56-1.021 8.52-.6 11.64 1.32.42.18.479.659.301 1.02zm1.44-3.3c-.301.42-.841.6-1.262.3-3.239-1.98-8.159-2.58-11.939-1.38-.479.12-1.02-.12-1.14-.6-.12-.48.12-1.021.6-1.141C9.6 9.9 15 10.561 18.72 12.84c.361.181.54.78.241 1.2zm.12-3.36C15.24 8.4 8.82 8.16 5.16 9.301c-.6.179-1.2-.181-1.38-.721-.18-.601.18-1.2.72-1.381 4.26-1.26 11.28-1.02 15.721 1.621.539.3.719 1.02.419 1.56-.299.421-1.02.599-1.559.3z"/>
   </svg>
 );
-
+ 
 // ── IMAGE UPLOAD MODAL ────────────────────────────────────────
 function ImageModal({ onInsert, onClose }) {
   const [tab, setTab]       = useState("upload"); // "upload" | "url"
@@ -301,7 +301,7 @@ function ImageModal({ onInsert, onClose }) {
   const [progress, setProgress]   = useState(0);
   const [uploadedUrl, setUploadedUrl] = useState("");
   const fileRef = useRef();
-
+ 
   const handleFile = async (file) => {
     if (!file || !file.type.startsWith("image/")) return;
     setUploading(true); setProgress(0); setUploadedUrl("");
@@ -317,14 +317,14 @@ function ImageModal({ onInsert, onClose }) {
     } catch(e) { alert("Upload failed: " + e.message); }
     setUploading(false);
   };
-
+ 
   const handleDrop = e => {
     e.preventDefault(); setOver(false);
     handleFile(e.dataTransfer.files[0]);
   };
-
+ 
   const finalUrl = tab === "upload" ? uploadedUrl : url;
-
+ 
   return (
     <div className="modal-bg" onClick={onClose}>
       <div className="modal" onClick={e => e.stopPropagation()}>
@@ -334,7 +334,7 @@ function ImageModal({ onInsert, onClose }) {
           <button className={`modal-tab${tab==="upload"?" on":""}`} onClick={()=>setTab("upload")}>⬆ Upload from laptop</button>
           <button className={`modal-tab${tab==="url"?" on":""}`} onClick={()=>setTab("url")}>🔗 Paste URL</button>
         </div>
-
+ 
         {tab === "upload" && (
           <>
             {!uploadedUrl && !uploading && (
@@ -363,14 +363,14 @@ function ImageModal({ onInsert, onClose }) {
             )}
           </>
         )}
-
+ 
         {tab === "url" && (
           <>
             {showPrev && url && <img src={url} className="modal-prev" onError={()=>setShowPrev(false)} />}
             <input className="modal-field" placeholder="https://images.unsplash.com/…" value={url} onChange={e=>setUrl(e.target.value)} onBlur={()=>setShowPrev(true)} autoFocus={tab==="url"} />
           </>
         )}
-
+ 
         <input className="modal-field" placeholder="Caption (optional)" value={cap} onChange={e=>setCap(e.target.value)} onKeyDown={e=>e.key==="Enter"&&finalUrl&&onInsert(finalUrl,cap)} />
         <div className="modal-btns">
           <button className="btn btn-outline btn-sm" onClick={onClose}>Cancel</button>
@@ -380,7 +380,7 @@ function ImageModal({ onInsert, onClose }) {
     </div>
   );
 }
-
+ 
 // ── VIDEO MODAL ───────────────────────────────────────────────
 function VideoModal({ onInsert, onClose }) {
   const [url, setUrl] = useState(""); const [cap, setCap] = useState("");
@@ -401,7 +401,7 @@ function VideoModal({ onInsert, onClose }) {
     </div>
   );
 }
-
+ 
 // ── TOOLBAR ───────────────────────────────────────────────────
 function Toolbar({ editorRef, onUpdate }) {
   const [fmt, setFmt]       = useState({});
@@ -456,7 +456,7 @@ function Toolbar({ editorRef, onUpdate }) {
     </>
   );
 }
-
+ 
 // ── COVER UPLOAD ──────────────────────────────────────────────
 // Shared component used in Editor for the cover photo zone
 function CoverUpload({ cover, onCover }) {
@@ -466,7 +466,7 @@ function CoverUpload({ cover, onCover }) {
   const [progress, setProgress]   = useState(0);
   const [over, setOver]           = useState(false);
   const fileRef = useRef();
-
+ 
   const handleFile = async file => {
     if (!file || !file.type.startsWith("image/")) return;
     setUploading(true); setProgress(0);
@@ -482,7 +482,7 @@ function CoverUpload({ cover, onCover }) {
     } catch(e) { alert("Upload failed: "+e.message); }
     setUploading(false);
   };
-
+ 
   return (
     <>
       <div className="cover-zone">
@@ -520,7 +520,7 @@ function CoverUpload({ cover, onCover }) {
     </>
   );
 }
-
+ 
 // ── EDITOR ────────────────────────────────────────────────────
 function Editor({ article, onSave, onCancel }) {
   const [title,    setTitle]    = useState(article?.title||"");
@@ -563,7 +563,7 @@ function Editor({ article, onSave, onCancel }) {
     </div>
   );
 }
-
+ 
 // ── CAROUSEL ──────────────────────────────────────────────────
 function Carousel({ articles, onArticle, isOwner, openNew }) {
   const [idx, setIdx]         = useState(0);
@@ -572,13 +572,13 @@ function Carousel({ articles, onArticle, isOwner, openNew }) {
   const timerRef = useRef(null);
   const pubs = articles.filter(a=>a.status==="published"&&a.coverImage);
   const displayed = pubs.length>0 ? pubs : articles.filter(a=>a.status==="published");
-
+ 
   const goTo = useCallback(i => {
     setIdx(i); setProgress(0); setAnimating(false); clearTimeout(timerRef.current);
     setTimeout(()=>{setProgress(100);setAnimating(true);},60);
     timerRef.current = setTimeout(()=>goTo((i+1)%Math.max(displayed.length,1)),5600);
   },[displayed.length]);
-
+ 
   useEffect(()=>{
     if(!displayed.length) return;
     setProgress(0); setAnimating(false);
@@ -586,14 +586,14 @@ function Carousel({ articles, onArticle, isOwner, openNew }) {
     timerRef.current=setTimeout(()=>goTo(1%displayed.length),5600);
     return ()=>{clearTimeout(t1);clearTimeout(timerRef.current);};
   },[displayed.length]);
-
+ 
   if(!displayed.length) return (
     <div style={{height:"60vh",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",gap:16,background:"#0a0a0c"}}>
       <p style={{fontStyle:"italic",color:"#2a2826",fontSize:22}}>Your journey begins here.</p>
       {isOwner && <button className="btn btn-gold" onClick={openNew}>Write your first article</button>}
     </div>
   );
-
+ 
   return (
     <div className="carousel">
       {displayed.map((a,i)=>(
@@ -618,7 +618,7 @@ function Carousel({ articles, onArticle, isOwner, openNew }) {
     </div>
   );
 }
-
+ 
 // ── GRID CARD ─────────────────────────────────────────────────
 function GridCard({ article, onClick }) {
   return (
@@ -633,7 +633,7 @@ function GridCard({ article, onClick }) {
     </div>
   );
 }
-
+ 
 // ── HOME ──────────────────────────────────────────────────────
 function Home({ articles, onArticle, isOwner, onPublish, onDelete }) {
   const pub    = [...articles].filter(a=>a.status==="published").sort((a,b)=>new Date(b.date)-new Date(a.date));
@@ -667,7 +667,7 @@ function Home({ articles, onArticle, isOwner, onPublish, onDelete }) {
     </div>
   );
 }
-
+ 
 // ── ARTICLE VIEW ──────────────────────────────────────────────
 function ArticleView({ article, onEdit, onBack, onToggle, onDelete, isOwner }) {
   const hasImg = !!article.coverImage;
@@ -714,25 +714,25 @@ function ArticleView({ article, onEdit, onBack, onToggle, onDelete, isOwner }) {
     </div>
   );
 }
-
+ 
 // ── NAV AUTH MENU ─────────────────────────────────────────────
 function NavAuth({ user, isOwner, onSignIn, onSignOut, onNew }) {
   const [open, setOpen] = useState(false);
   const ref = useRef(null);
   const uidUnset = OWNER_UID === "PASTE_YOUR_UID_HERE";
-
+ 
   useEffect(()=>{
     const h = e => { if(ref.current && !ref.current.contains(e.target)) setOpen(false); };
     document.addEventListener("mousedown", h);
     return ()=>document.removeEventListener("mousedown", h);
   },[]);
-
+ 
   const copyUid = () => {
     if (user?.uid) { navigator.clipboard.writeText(user.uid).catch(()=>{}); alert("UID copied! Paste it into your index.html as OWNER_UID, then redeploy."); }
   };
-
+ 
   if (!user) return null; // signed-out users see nothing — sign-in is via footer link
-
+ 
   return (
     <div style={{position:"relative"}} ref={ref}>
       {isOwner && <button className="btn btn-gold btn-sm" onClick={onNew} style={{marginRight:6}}>+ New</button>}
@@ -765,7 +765,7 @@ function NavAuth({ user, isOwner, onSignIn, onSignOut, onNew }) {
     </div>
   );
 }
-
+ 
 // ── APP ───────────────────────────────────────────────────────
 function App() {
   const [articles, setArticles] = useState([]);
@@ -774,11 +774,11 @@ function App() {
   const [selected, setSelected] = useState(null);
   const [scrolled, setScrolled] = useState(false);
   const [user,     setUser]     = useState(null);
-
+ 
   const isOwner = !!(user && OWNER_UID !== "PASTE_YOUR_UID_HERE" && user.uid === OWNER_UID);
-
+ 
   useEffect(()=>{ return auth.onAuthStateChanged(u=>setUser(u)); },[]);
-
+ 
   useEffect(()=>{
     const onScroll = ()=>setScrolled(window.scrollY>50);
     window.addEventListener("scroll",onScroll,{passive:true});
@@ -791,10 +791,10 @@ function App() {
     });
     return ()=>{ window.removeEventListener("scroll",onScroll); db.off("value",listener); };
   },[]);
-
+ 
   const signIn  = ()=>{ const p=new firebase.auth.GoogleAuthProvider(); auth.signInWithPopup(p).catch(e=>alert("Sign in failed: "+e.message)); };
   const signOut = ()=>auth.signOut();
-
+ 
   const handleSave = art => {
     if(!isOwner) return;
     const id=art.id||genId();
@@ -812,13 +812,13 @@ function App() {
   const openArticle   = a=>{ setSelected(a);setView("article");window.scrollTo(0,0); };
   const openNew       = ()=>{ if(!isOwner)return; setSelected(null);setView("editor");window.scrollTo(0,0); };
   const goHome        = ()=>{ setView("home");window.scrollTo(0,0); };
-
+ 
   if(!ready) return null;
-
+ 
   return (
     <div className="app">
       <style>{CSS}</style>
-
+ 
       {/* ── NAV ── */}
       <nav className={`nav${scrolled?" scrolled":""}`}>
         <div className="nav-logo" onClick={goHome}>ATLAS<em>.</em></div>
@@ -826,12 +826,12 @@ function App() {
           <NavAuth user={user} isOwner={isOwner} onSignIn={signIn} onSignOut={signOut} onNew={openNew} />
         </div>
       </nav>
-
+ 
       {/* ── VIEWS ── */}
       {view==="home" && <>
         <Carousel articles={articles} onArticle={openArticle} isOwner={isOwner} openNew={openNew} />
         <Home articles={articles} onArticle={openArticle} isOwner={isOwner} onPublish={handlePublish} onDelete={handleDelete} />
-
+ 
         {/* Tiny, invisible-to-strangers admin sign-in link in the footer area */}
         <div style={{textAlign:"center",padding:"28px 0 40px",borderTop:"1px solid rgba(255,255,255,0.03)"}}>
           <span style={{fontFamily:"'Helvetica Neue',sans-serif",fontSize:11,color:"#1a1816",letterSpacing:.5}}>
@@ -844,7 +844,7 @@ function App() {
           )}
         </div>
       </>}
-
+ 
       {view==="article" && selected && <>
         <ArticleView article={selected} isOwner={isOwner}
           onBack={goHome}
@@ -855,15 +855,16 @@ function App() {
           <span style={{fontFamily:"'Helvetica Neue',sans-serif",fontSize:11,color:"#1a1816"}}>© {new Date().getFullYear()} Atlas Journal</span>
         </div>
       </>}
-
+ 
       {view==="editor" && isOwner && (
         <Editor article={selected} onSave={handleSave} onCancel={()=>setView(selected?"article":"home")} />
       )}
     </div>
   );
 }
-
+ 
 ReactDOM.createRoot(document.getElementById("root")).render(<App />);
 </script>
 </body>
 </html>
+ 
