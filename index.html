@@ -401,7 +401,6 @@ function Timeline({ articles, onArticle }) {
 }
 
 // ── WORLD MAP ─────────────────────────────────────────────────
-// Geocode cache stored in Firebase so we don't re-fetch
 const geoCache = {};
 
 async function geocode(location) {
@@ -421,72 +420,148 @@ async function geocode(location) {
 }
 
 function WorldMap({ articles, onArticle }) {
-  const mapRef   = useRef(null);
-  const leafRef  = useRef(null);
-  const [coords, setCoords] = useState([]);
+  const mapRef  = useRef(null);
+  const leafRef = useRef(null);
+  // groups: array of { lat, lng, location, articles[] }
+  const [groups, setGroups] = useState([]);
+  // floating panel state
+  const [panel, setPanel]   = useState(null); // { x, y, group }
 
-  const pubs = articles.filter(a=>a.status==="published" && a.location);
+  const pubs = articles.filter(a => a.status === "published" && a.location);
 
-  useEffect(()=>{
+  // Geocode all locations, then cluster by matching lat/lng (same location text → same pin)
+  useEffect(() => {
     let cancelled = false;
-    (async()=>{
-      const results = [];
+    (async () => {
+      // Build a map: locationKey → { lat, lng, articles[] }
+      const byLoc = {};
       for (const a of pubs) {
-        const c = await geocode(a.location);
-        if (c && !cancelled) results.push({...c, article:a});
+        const key = a.location.toLowerCase().trim();
+        if (!byLoc[key]) {
+          const c = await geocode(a.location);
+          if (!c) continue;
+          byLoc[key] = { lat: c.lat, lng: c.lng, location: a.location, articles: [] };
+        }
+        byLoc[key].articles.push(a);
       }
-      if (!cancelled) setCoords(results);
+      if (!cancelled) setGroups(Object.values(byLoc));
     })();
-    return ()=>{ cancelled=true; };
-  }, [pubs.map(a=>a.id+a.location).join(",")]);
+    return () => { cancelled = true; };
+  }, [pubs.map(a => a.id + a.location).join(",")]);
 
-  useEffect(()=>{
+  // Build/refresh Leaflet markers whenever groups change
+  useEffect(() => {
     if (!mapRef.current || !window.L) return;
+
     if (!leafRef.current) {
       leafRef.current = L.map(mapRef.current, {
-        center: [20, 10], zoom: 2, zoomControl: true,
+        center: [20, 10], zoom: 2,
         scrollWheelZoom: false,
         attributionControl: false,
       });
       L.tileLayer("https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png", {
-        maxZoom: 18
+        maxZoom: 18,
       }).addTo(leafRef.current);
+      // Close panel on map click
+      leafRef.current.on("click", () => setPanel(null));
     }
-    // Clear existing markers
-    leafRef.current.eachLayer(l=>{ if(l instanceof L.Marker) leafRef.current.removeLayer(l); });
-    // Add markers
-    coords.forEach(({lat,lng,article})=>{
+
+    // Remove old markers
+    leafRef.current.eachLayer(l => { if (l instanceof L.Marker) leafRef.current.removeLayer(l); });
+
+    groups.forEach(group => {
+      const multi = group.articles.length > 1;
       const icon = L.divIcon({
-        className:"",
-        html:`<div style="width:12px;height:12px;border-radius:50%;background:#c9a84c;border:2px solid #0a0a0c;box-shadow:0 0 0 2px rgba(201,168,76,0.3);cursor:pointer;transition:transform .15s"></div>`,
-        iconSize:[12,12], iconAnchor:[6,6],
+        className: "",
+        html: `<div style="
+          width:${multi?16:11}px;height:${multi?16:11}px;border-radius:50%;
+          background:#c9a84c;border:2px solid #0a0a0c;
+          box-shadow:0 0 0 2px rgba(201,168,76,0.3);
+          cursor:pointer;display:flex;align-items:center;justify-content:center;
+          font-family:'Helvetica Neue',sans-serif;font-size:9px;font-weight:700;
+          color:#0a0a0c;
+        ">${multi ? group.articles.length : ""}</div>`,
+        iconSize: [multi ? 16 : 11, multi ? 16 : 11],
+        iconAnchor: [multi ? 8 : 5.5, multi ? 8 : 5.5],
       });
-      const marker = L.marker([lat,lng], {icon}).addTo(leafRef.current);
-      const pop = `<div style="font-family:Georgia,serif;min-width:160px">
-        ${article.coverImage?`<img src="${article.coverImage}" style="width:100%;height:90px;object-fit:cover;display:block;margin-bottom:8px;border-radius:3px" />`:""}
-        <div style="font-size:9px;letter-spacing:3px;text-transform:uppercase;color:#c9a84c;margin-bottom:4px">${article.location||""}</div>
-        <div style="font-size:13px;font-weight:600;color:#e2ddd6;line-height:1.3;margin-bottom:6px">${article.title||"Untitled"}</div>
-        <div style="font-size:11px;color:#606060">${article.date?new Date(article.date+"T12:00:00").toLocaleDateString("en-US",{month:"short",day:"numeric",year:"numeric"}):""}</div>
-      </div>`;
-      marker.bindPopup(pop, {className:"atlas-popup", maxWidth:200});
-      marker.on("click", ()=>onArticle(article));
+
+      const marker = L.marker([group.lat, group.lng], { icon }).addTo(leafRef.current);
+
+      marker.on("click", e => {
+        L.DomEvent.stopPropagation(e);
+        if (group.articles.length === 1) {
+          onArticle(group.articles[0]);
+          return;
+        }
+        // Get pixel position of marker on screen
+        const pt = leafRef.current.latLngToContainerPoint([group.lat, group.lng]);
+        const mapRect = mapRef.current.getBoundingClientRect();
+        setPanel({
+          x: mapRect.left + pt.x,
+          y: mapRect.top + pt.y,
+          group,
+        });
+      });
     });
-  }, [coords]);
+  }, [groups]);
 
   if (pubs.length === 0) return null;
 
   return (
-    <div style={{background:"#0a0a0c",borderTop:"1px solid rgba(255,255,255,0.04)",borderBottom:"1px solid rgba(255,255,255,0.04)"}}>
-      <div style={{maxWidth:1180,margin:"0 auto",padding:"48px 24px 52px"}}>
-        <div style={{display:"flex",alignItems:"center",gap:14,marginBottom:24}}>
-          <div style={{flex:1,height:1,background:"rgba(255,255,255,0.05)"}} />
-          <span style={{fontFamily:"'Helvetica Neue',sans-serif",fontSize:10,letterSpacing:5,textTransform:"uppercase",color:"#3a3836",fontWeight:600,whiteSpace:"nowrap"}}>Where I've Been</span>
-          <div style={{flex:1,height:1,background:"rgba(255,255,255,0.05)"}} />
+    <>
+      <div style={{background:"#0a0a0c",borderTop:"1px solid rgba(255,255,255,0.04)",borderBottom:"1px solid rgba(255,255,255,0.04)"}}>
+        <div style={{maxWidth:1180,margin:"0 auto",padding:"48px 24px 52px"}}>
+          <div style={{display:"flex",alignItems:"center",gap:14,marginBottom:24}}>
+            <div style={{flex:1,height:1,background:"rgba(255,255,255,0.05)"}} />
+            <span style={{fontFamily:"'Helvetica Neue',sans-serif",fontSize:10,letterSpacing:5,textTransform:"uppercase",color:"#3a3836",fontWeight:600,whiteSpace:"nowrap"}}>Where I've Been</span>
+            <div style={{flex:1,height:1,background:"rgba(255,255,255,0.05)"}} />
+          </div>
+          <div ref={mapRef} style={{width:"100%",height:440,borderRadius:12,overflow:"hidden",border:"1px solid rgba(255,255,255,0.06)"}} />
+          <p style={{fontFamily:"'Helvetica Neue',sans-serif",fontSize:11,color:"#2a2826",marginTop:10,textAlign:"center",fontStyle:"italic"}}>
+            Click a pin to open · numbered pins have multiple visits
+          </p>
         </div>
-        <div ref={mapRef} style={{width:"100%",height:440,borderRadius:12,overflow:"hidden",border:"1px solid rgba(255,255,255,0.06)"}} />
-        <p style={{fontFamily:"'Helvetica Neue',sans-serif",fontSize:11,color:"#2a2826",marginTop:10,textAlign:"center",fontStyle:"italic"}}>Click any pin to open the article</p>
       </div>
-    </div>
+
+      {/* Floating article picker panel */}
+      {panel && (
+        <>
+          {/* invisible backdrop to close */}
+          <div style={{position:"fixed",inset:0,zIndex:700}} onClick={()=>setPanel(null)} />
+          <div style={{
+            position:"fixed",
+            left: Math.min(panel.x + 14, window.innerWidth - 240),
+            top:  Math.min(panel.y - 10, window.innerHeight - panel.group.articles.length * 74 - 60),
+            zIndex:701, width:224,
+            background:"#18161a", border:"1px solid rgba(255,255,255,0.1)",
+            borderRadius:10, overflow:"hidden",
+            boxShadow:"0 20px 50px rgba(0,0,0,.75)",
+          }}>
+            <div style={{padding:"10px 14px 8px",borderBottom:"1px solid rgba(255,255,255,0.06)"}}>
+              <div style={{fontFamily:"'Helvetica Neue',sans-serif",fontSize:8,letterSpacing:3,textTransform:"uppercase",color:"#c9a84c",fontWeight:700,marginBottom:2}}>{panel.group.location}</div>
+              <div style={{fontFamily:"'Helvetica Neue',sans-serif",fontSize:11,color:"#484440"}}>{panel.group.articles.length} visits — select one</div>
+            </div>
+            {panel.group.articles
+              .sort((a,b) => new Date(b.date) - new Date(a.date))
+              .map(a => (
+                <div key={a.id}
+                  onClick={() => { setPanel(null); onArticle(a); }}
+                  style={{display:"flex",alignItems:"center",gap:10,padding:"10px 14px",cursor:"pointer",borderBottom:"1px solid rgba(255,255,255,0.04)",transition:"background .15s"}}
+                  onMouseEnter={e=>e.currentTarget.style.background="rgba(255,255,255,0.04)"}
+                  onMouseLeave={e=>e.currentTarget.style.background="transparent"}>
+                  {a.coverImage
+                    ? <img src={a.coverImage} style={{width:44,height:32,objectFit:"cover",borderRadius:4,flexShrink:0}} />
+                    : <div style={{width:44,height:32,background:"#1c1a1e",borderRadius:4,flexShrink:0}} />}
+                  <div style={{minWidth:0}}>
+                    <div style={{fontFamily:"Georgia,serif",fontSize:12,color:"#d8d4ce",fontWeight:600,lineHeight:1.3,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{a.title||"Untitled"}</div>
+                    <div style={{fontFamily:"'Helvetica Neue',sans-serif",fontSize:10,color:"#484440",marginTop:2}}>{a.date?new Date(a.date+"T12:00:00").toLocaleDateString("en-US",{month:"short",year:"numeric"}):""}</div>
+                  </div>
+                </div>
+              ))}
+          </div>
+        </>
+      )}
+    </>
   );
 }
 
