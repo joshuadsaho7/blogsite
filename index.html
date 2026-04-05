@@ -278,6 +278,36 @@ const CSS = `
 .upload-prog { width:100%; height:4px; background:rgba(255,255,255,0.06); border-radius:2px; margin-bottom:10px; overflow:hidden; }
 .upload-prog-bar { height:100%; background:#c9a84c; border-radius:2px; transition:width .2s; }
 
+/* TIMELINE */
+.tl-section { background:#0e0c10; border-bottom:1px solid rgba(255,255,255,0.04); }
+.tl-header { display:flex; align-items:center; justify-content:space-between; padding:28px 40px 0; }
+.tl-title { font-family:'Helvetica Neue',sans-serif; font-size:10px; letter-spacing:5px; text-transform:uppercase; color:#3a3836; font-weight:600; }
+.tl-hint { font-family:'Helvetica Neue',sans-serif; font-size:10px; color:#2a2826; font-style:italic; }
+.tl-scroll { overflow-x:auto; overflow-y:visible; padding:36px 40px 32px; scrollbar-width:thin; scrollbar-color:#2a2826 transparent; position:relative; }
+.tl-scroll::-webkit-scrollbar { height:3px; }
+.tl-scroll::-webkit-scrollbar-thumb { background:#2a2826; border-radius:2px; }
+.tl-inner { position:relative; display:flex; align-items:flex-end; min-height:130px; }
+.tl-track { position:absolute; bottom:42px; left:0; right:0; height:1px; background:linear-gradient(90deg,transparent,rgba(255,255,255,0.08) 3%,rgba(255,255,255,0.08) 97%,transparent); }
+.tl-year-label { position:absolute; bottom:28px; transform:translateX(-50%); font-family:'Helvetica Neue',sans-serif; font-size:9px; color:#2c2a28; letter-spacing:1px; white-space:nowrap; user-select:none; }
+.tl-year-tick { position:absolute; bottom:38px; transform:translateX(-50%); width:1px; height:8px; background:rgba(255,255,255,0.06); }
+.tl-pin-wrap { position:absolute; display:flex; flex-direction:column; align-items:center; cursor:pointer; transform:translateX(-50%); z-index:1; }
+.tl-pin-wrap:hover { z-index:50; }
+.tl-pin { width:10px; height:10px; border-radius:50%; background:#c9a84c; border:2px solid #0e0c10; box-shadow:0 0 0 1px rgba(201,168,76,0.3); transition:transform .2s,box-shadow .2s; flex-shrink:0; }
+.tl-pin-wrap:hover .tl-pin { transform:scale(1.5); box-shadow:0 0 0 4px rgba(201,168,76,0.15); }
+.tl-pin.draft { background:#503a2a; box-shadow:0 0 0 1px rgba(80,58,42,0.4); }
+.tl-pin-label { font-family:'Helvetica Neue',sans-serif; font-size:9px; color:#484440; white-space:nowrap; margin-bottom:6px; letter-spacing:.3px; max-width:80px; text-align:center; overflow:hidden; text-overflow:ellipsis; transition:color .2s; }
+.tl-pin-wrap:hover .tl-pin-label { color:#c9a84c; }
+.tl-now { position:absolute; bottom:36px; width:1px; background:rgba(201,168,76,0.35); transform:translateX(-50%); }
+.tl-now-label { position:absolute; bottom:22px; transform:translateX(-50%); font-family:'Helvetica Neue',sans-serif; font-size:8px; color:#c9a84c; letter-spacing:2px; text-transform:uppercase; white-space:nowrap; opacity:.6; }
+.tl-preview { position:fixed; pointer-events:none; z-index:500; width:280px; background:#18161a; border-radius:10px; border:1px solid rgba(255,255,255,0.08); overflow:hidden; box-shadow:0 24px 60px rgba(0,0,0,.7); transition:opacity .18s,transform .18s; opacity:0; transform:translateY(8px) scale(.97); }
+.tl-preview.show { opacity:1; transform:translateY(0) scale(1); }
+.tl-preview-img { width:100%; height:160px; object-fit:cover; display:block; }
+.tl-preview-no-img { width:100%; height:100px; background:#1c1a1e; display:flex; align-items:center; justify-content:center; font-size:26px; opacity:.1; }
+.tl-preview-body { padding:14px 16px 16px; }
+.tl-preview-loc { font-family:'Helvetica Neue',sans-serif; font-size:8px; letter-spacing:3px; text-transform:uppercase; color:#c9a84c; margin-bottom:6px; font-weight:700; }
+.tl-preview-title { font-size:14px; font-weight:600; color:#d8d4ce; line-height:1.3; margin-bottom:5px; }
+.tl-preview-date { font-family:'Helvetica Neue',sans-serif; font-size:10px; color:#484440; }
+
 /* FOOTER */
 .footer { background:#0e0c10; border-top:1px solid rgba(255,255,255,0.05); margin-top:40px; }
 .footer-main { max-width:1180px; margin:0 auto; padding:56px 40px 44px; display:grid; grid-template-columns:1fr 1fr 1fr; gap:48px; }
@@ -312,12 +342,63 @@ const CSS = `
 .footer-admin-link:hover { color:#3a3836; }
 `;
 
+// ── TIMELINE ──────────────────────────────────────────────────
+function Timeline({ articles, onArticle }) {
+  const START=2005, now=new Date(), END=now.getFullYear(), PPY=110;
+  const totalW=(END-START+1)*PPY+80;
+  const [hovered,setHovered]=useState(null);
+  const [pos,setPos]=useState({x:0,y:0});
+  const dateToX=d=>{ const dt=new Date(d+"T12:00:00"); return 40+(dt.getFullYear()-START+dt.getMonth()/12+dt.getDate()/365)*PPY; };
+  const nowX=40+(END-START+now.getMonth()/12)*PPY;
+  const onMove=e=>{ const pw=280,ph=280,vw=window.innerWidth,vh=window.innerHeight; let x=e.clientX+18,y=e.clientY-140; if(x+pw>vw-12)x=e.clientX-pw-18; if(y<12)y=12; if(y+ph>vh-12)y=vh-ph-12; setPos({x,y}); };
+  const years=[]; for(let y=START;y<=END;y++) years.push(y);
+  const pins=[...articles].filter(a=>a.date).sort((a,b)=>new Date(a.date)-new Date(b.date));
+  return (
+    <div className="tl-section">
+      <div className="tl-header">
+        <span className="tl-title">Journey Timeline</span>
+        <span className="tl-hint">{START} — present · hover to preview</span>
+      </div>
+      <div className="tl-scroll" onMouseMove={onMove}>
+        <div className="tl-inner" style={{width:totalW}}>
+          <div className="tl-track" />
+          {years.map(y=>{ const x=40+(y-START)*PPY; return <span key={y}><div className="tl-year-tick" style={{left:x}} /><div className="tl-year-label" style={{left:x}}>{y}</div></span>; })}
+          <div className="tl-now" style={{left:nowX,top:0,bottom:28}} />
+          <div className="tl-now-label" style={{left:nowX}}>now</div>
+          {pins.map(a=>{
+            const x=dateToX(a.date);
+            return (
+              <div key={a.id} className="tl-pin-wrap" style={{left:x,bottom:36}}
+                onMouseEnter={()=>setHovered(a)} onMouseLeave={()=>setHovered(null)}
+                onClick={()=>onArticle(a)}>
+                <div className="tl-pin-label">{a.location?.split(",")[0]||a.title?.slice(0,14)}</div>
+                <div className={`tl-pin${a.status==="draft"?" draft":""}`} />
+              </div>
+            );
+          })}
+        </div>
+      </div>
+      {hovered && (
+        <div className="tl-preview show" style={{left:pos.x,top:pos.y}}>
+          {hovered.coverImage?<img src={hovered.coverImage} className="tl-preview-img" alt="" />:<div className="tl-preview-no-img">✈</div>}
+          <div className="tl-preview-body">
+            {hovered.location&&<div className="tl-preview-loc">{hovered.location}</div>}
+            <div className="tl-preview-title">{hovered.title||"Untitled"}</div>
+            {hovered.date&&<div className="tl-preview-date">{fmtDate(hovered.date)}</div>}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── FOOTER ────────────────────────────────────────────────────
 const DEFAULT_ABOUT = { name:"Your Name", byline:"Writer · Photographer · Wanderer", bio:"I've been chasing horizons since I can remember. This journal is where I make sense of what I see.", portrait:"" };
 
 function Footer({ articles, onArticle, isOwner, onSignIn, user }) {
-  const [about, setAbout]     = useState(()=>{ try{ const s=localStorage.getItem("atlas-about"); return s?JSON.parse(s):DEFAULT_ABOUT; }catch{ return DEFAULT_ABOUT; } });
-  const [editing, setEditing] = useState(false);
-  const [draft, setDraft]     = useState(about);
+  const [about, setAbout]         = useState(()=>{ try{ const s=localStorage.getItem("atlas-about"); return s?JSON.parse(s):DEFAULT_ABOUT; }catch{ return DEFAULT_ABOUT; } });
+  const [editing, setEditing]     = useState(false);
+  const [draft, setDraft]         = useState(about);
   const [uploading, setUploading] = useState(false);
   const portraitRef = useRef();
 
@@ -325,14 +406,18 @@ function Footer({ articles, onArticle, isOwner, onSignIn, user }) {
 
   const handlePortrait = async file => {
     if (!file) return;
+    if (!file.type.startsWith("image/")) { alert("Please choose an image file."); return; }
     setUploading(true);
     try {
-      const ext=file.name.split(".").pop();
-      const ref=storage.ref(`portraits/${Date.now()}.${ext}`);
-      await ref.put(file);
-      const url=await ref.getDownloadURL();
-      setDraft(d=>({...d,portrait:url}));
-    } catch(e){ alert("Upload failed: "+e.message); }
+      const ext = file.name.split(".").pop();
+      const storageRef = storage.ref("portraits/" + Date.now() + "." + ext);
+      const snapshot = await storageRef.put(file);
+      const url = await snapshot.ref.getDownloadURL();
+      setDraft(d=>({...d, portrait:url}));
+    } catch(e) {
+      console.error("Portrait upload error:", e);
+      alert("Upload failed: " + (e.message || e.code || JSON.stringify(e)) + "\n\nCheck that Firebase Storage rules allow writes for your UID.");
+    }
     setUploading(false);
   };
 
@@ -945,6 +1030,7 @@ function App() {
       {/* ── VIEWS ── */}
       {view==="home" && <>
         <Carousel articles={articles} onArticle={openArticle} isOwner={isOwner} openNew={openNew} />
+        <Timeline articles={articles} onArticle={openArticle} />
         <Home articles={articles} onArticle={openArticle} isOwner={isOwner} onPublish={handlePublish} onDelete={handleDelete} />
         <Footer articles={articles} onArticle={openArticle} isOwner={isOwner} onSignIn={signIn} user={user} />
       </>}
