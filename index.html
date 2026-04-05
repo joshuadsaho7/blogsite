@@ -12,12 +12,20 @@
 <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-database-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-auth-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-storage-compat.js"></script>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 <style>
   * { box-sizing: border-box; margin: 0; padding: 0; }
   html { scroll-behavior: smooth; }
   body { background: #0a0a0c; font-family: Georgia,'Times New Roman',serif; overflow-x: hidden; }
   #root { min-height: 100vh; }
   #loading { position: fixed; inset: 0; background: #0a0a0c; display: flex; align-items: center; justify-content: center; color: #252220; font-family: Georgia,serif; font-style: italic; font-size: 18px; z-index: 9999; transition: opacity .4s; }
+  .atlas-popup .leaflet-popup-content-wrapper { background:#18161a; border:1px solid rgba(255,255,255,0.08); border-radius:8px; box-shadow:0 16px 40px rgba(0,0,0,.7); padding:0; }
+  .atlas-popup .leaflet-popup-content { margin:12px; }
+  .atlas-popup .leaflet-popup-tip-container { display:none; }
+  .atlas-popup a.leaflet-popup-close-button { color:#484440; top:6px; right:8px; }
+  .leaflet-control-zoom a { background:#18161a !important; color:#908880 !important; border-color:rgba(255,255,255,0.08) !important; }
+  .leaflet-control-zoom a:hover { background:#222 !important; color:#e2ddd6 !important; }
 </style>
 </head>
 <body>
@@ -44,7 +52,7 @@ const storage = firebase.storage();
 // ── OWNER UID ─────────────────────────────────────────────────
 // After signing in for the first time, your UID will be shown
 // in the admin menu. Paste it here, then redeploy.
-const OWNER_UID = "LWSFur0NfyMWuPxyOo2pkMojzDX2";
+const OWNER_UID = "PASTE_YOUR_UID_HERE";
 
 // ── HELPERS ───────────────────────────────────────────────────
 const genId    = () => Math.random().toString(36).substr(2, 9);
@@ -392,17 +400,121 @@ function Timeline({ articles, onArticle }) {
   );
 }
 
+// ── WORLD MAP ─────────────────────────────────────────────────
+// Geocode cache stored in Firebase so we don't re-fetch
+const geoCache = {};
+
+async function geocode(location) {
+  if (!location) return null;
+  const key = location.toLowerCase().trim();
+  if (geoCache[key]) return geoCache[key];
+  try {
+    const r = await fetch(`https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(location)}&format=json&limit=1`);
+    const d = await r.json();
+    if (d && d[0]) {
+      const result = { lat: parseFloat(d[0].lat), lng: parseFloat(d[0].lon) };
+      geoCache[key] = result;
+      return result;
+    }
+  } catch(e) {}
+  return null;
+}
+
+function WorldMap({ articles, onArticle }) {
+  const mapRef   = useRef(null);
+  const leafRef  = useRef(null);
+  const [coords, setCoords] = useState([]);
+
+  const pubs = articles.filter(a=>a.status==="published" && a.location);
+
+  useEffect(()=>{
+    let cancelled = false;
+    (async()=>{
+      const results = [];
+      for (const a of pubs) {
+        const c = await geocode(a.location);
+        if (c && !cancelled) results.push({...c, article:a});
+      }
+      if (!cancelled) setCoords(results);
+    })();
+    return ()=>{ cancelled=true; };
+  }, [pubs.map(a=>a.id+a.location).join(",")]);
+
+  useEffect(()=>{
+    if (!mapRef.current || !window.L) return;
+    if (!leafRef.current) {
+      leafRef.current = L.map(mapRef.current, {
+        center: [20, 10], zoom: 2, zoomControl: true,
+        scrollWheelZoom: false,
+        attributionControl: false,
+      });
+      L.tileLayer("https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png", {
+        maxZoom: 18
+      }).addTo(leafRef.current);
+    }
+    // Clear existing markers
+    leafRef.current.eachLayer(l=>{ if(l instanceof L.Marker) leafRef.current.removeLayer(l); });
+    // Add markers
+    coords.forEach(({lat,lng,article})=>{
+      const icon = L.divIcon({
+        className:"",
+        html:`<div style="width:12px;height:12px;border-radius:50%;background:#c9a84c;border:2px solid #0a0a0c;box-shadow:0 0 0 2px rgba(201,168,76,0.3);cursor:pointer;transition:transform .15s"></div>`,
+        iconSize:[12,12], iconAnchor:[6,6],
+      });
+      const marker = L.marker([lat,lng], {icon}).addTo(leafRef.current);
+      const pop = `<div style="font-family:Georgia,serif;min-width:160px">
+        ${article.coverImage?`<img src="${article.coverImage}" style="width:100%;height:90px;object-fit:cover;display:block;margin-bottom:8px;border-radius:3px" />`:""}
+        <div style="font-size:9px;letter-spacing:3px;text-transform:uppercase;color:#c9a84c;margin-bottom:4px">${article.location||""}</div>
+        <div style="font-size:13px;font-weight:600;color:#e2ddd6;line-height:1.3;margin-bottom:6px">${article.title||"Untitled"}</div>
+        <div style="font-size:11px;color:#606060">${article.date?new Date(article.date+"T12:00:00").toLocaleDateString("en-US",{month:"short",day:"numeric",year:"numeric"}):""}</div>
+      </div>`;
+      marker.bindPopup(pop, {className:"atlas-popup", maxWidth:200});
+      marker.on("click", ()=>onArticle(article));
+    });
+  }, [coords]);
+
+  if (pubs.length === 0) return null;
+
+  return (
+    <div style={{background:"#0a0a0c",borderTop:"1px solid rgba(255,255,255,0.04)",borderBottom:"1px solid rgba(255,255,255,0.04)"}}>
+      <div style={{maxWidth:1180,margin:"0 auto",padding:"48px 24px 52px"}}>
+        <div style={{display:"flex",alignItems:"center",gap:14,marginBottom:24}}>
+          <div style={{flex:1,height:1,background:"rgba(255,255,255,0.05)"}} />
+          <span style={{fontFamily:"'Helvetica Neue',sans-serif",fontSize:10,letterSpacing:5,textTransform:"uppercase",color:"#3a3836",fontWeight:600,whiteSpace:"nowrap"}}>Where I've Been</span>
+          <div style={{flex:1,height:1,background:"rgba(255,255,255,0.05)"}} />
+        </div>
+        <div ref={mapRef} style={{width:"100%",height:440,borderRadius:12,overflow:"hidden",border:"1px solid rgba(255,255,255,0.06)"}} />
+        <p style={{fontFamily:"'Helvetica Neue',sans-serif",fontSize:11,color:"#2a2826",marginTop:10,textAlign:"center",fontStyle:"italic"}}>Click any pin to open the article</p>
+      </div>
+    </div>
+  );
+}
+
 // ── FOOTER ────────────────────────────────────────────────────
 const DEFAULT_ABOUT = { name:"Your Name", byline:"Writer · Photographer · Wanderer", bio:"I've been chasing horizons since I can remember. This journal is where I make sense of what I see.", portrait:"" };
+const aboutRef = firebase.database().ref("about");
 
 function Footer({ articles, onArticle, isOwner, onSignIn, user }) {
-  const [about, setAbout]         = useState(()=>{ try{ const s=localStorage.getItem("atlas-about"); return s?JSON.parse(s):DEFAULT_ABOUT; }catch{ return DEFAULT_ABOUT; } });
+  const [about, setAbout]         = useState(DEFAULT_ABOUT);
   const [editing, setEditing]     = useState(false);
-  const [draft, setDraft]         = useState(about);
+  const [draft, setDraft]         = useState(DEFAULT_ABOUT);
   const [uploading, setUploading] = useState(false);
   const portraitRef = useRef();
 
-  const saveAbout = () => { setAbout(draft); try{ localStorage.setItem("atlas-about",JSON.stringify(draft)); }catch{} setEditing(false); };
+  // Load about from Firebase — syncs across all devices
+  useEffect(()=>{
+    const listener = aboutRef.on("value", snap=>{
+      const data = snap.val();
+      if (data) { setAbout(data); setDraft(data); }
+    });
+    return ()=>aboutRef.off("value", listener);
+  },[]);
+
+  const saveAbout = () => {
+    aboutRef.set(draft).catch(e=>alert("Save failed: "+e.message));
+    setAbout(draft);
+    setEditing(false);
+  };
 
   const handlePortrait = async file => {
     if (!file) return;
@@ -416,7 +528,7 @@ function Footer({ articles, onArticle, isOwner, onSignIn, user }) {
       setDraft(d=>({...d, portrait:url}));
     } catch(e) {
       console.error("Portrait upload error:", e);
-      alert("Upload failed: " + (e.message || e.code || JSON.stringify(e)) + "\n\nCheck that Firebase Storage rules allow writes for your UID.");
+      alert("Upload failed: " + (e.message || e.code || JSON.stringify(e)) + "\n\nCheck Firebase Storage rules allow writes for your UID.");
     }
     setUploading(false);
   };
@@ -1032,6 +1144,7 @@ function App() {
         <Carousel articles={articles} onArticle={openArticle} isOwner={isOwner} openNew={openNew} />
         <Timeline articles={articles} onArticle={openArticle} />
         <Home articles={articles} onArticle={openArticle} isOwner={isOwner} onPublish={handlePublish} onDelete={handleDelete} />
+        <WorldMap articles={articles} onArticle={openArticle} />
         <Footer articles={articles} onArticle={openArticle} isOwner={isOwner} onSignIn={signIn} user={user} />
       </>}
 
