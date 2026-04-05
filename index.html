@@ -240,6 +240,14 @@ const CSS = `
 .ef-meta-row .ef { font-size:12px; font-family:'Helvetica Neue',sans-serif; color:#555250; }
 .ef-url { font-size:12px; color:#343230; font-family:'Helvetica Neue',sans-serif; }
 .ed-spacer { height:24px; }
+/* Location tags */
+.loc-tags-wrap { border-bottom:1px solid rgba(255,255,255,0.07); padding:8px 0 6px; display:flex; flex-wrap:wrap; gap:6px; align-items:center; min-height:42px; cursor:text; transition:border-color .2s; }
+.loc-tags-wrap:focus-within { border-bottom-color:rgba(201,168,76,.4); }
+.loc-tag { display:inline-flex; align-items:center; gap:5px; padding:3px 10px 3px 12px; background:rgba(201,168,76,.12); border:1px solid rgba(201,168,76,.25); border-radius:20px; font-size:12px; color:#c9a84c; font-family:'Helvetica Neue',sans-serif; letter-spacing:.3px; white-space:nowrap; }
+.loc-tag-remove { background:none; border:none; color:#c9a84c; cursor:pointer; font-size:14px; padding:0; line-height:1; opacity:.7; }
+.loc-tag-remove:hover { opacity:1; }
+.loc-tag-input { border:none; background:transparent; outline:none; font-family:'Helvetica Neue',sans-serif; font-size:12px; color:#e2ddd6; min-width:140px; flex:1; padding:2px 0; }
+.loc-tag-input::placeholder { color:#282624; font-style:italic; }
 .toolbar { display:flex; flex-wrap:wrap; gap:1px; padding:8px 10px; background:#161416; border-radius:8px 8px 0 0; border:1px solid rgba(255,255,255,0.07); border-bottom:none; }
 .tbtn { padding:5px 9px; border:none; background:transparent; border-radius:4px; cursor:pointer; font-family:Georgia,serif; font-size:13px; color:#555250; transition:all .14s; min-width:30px; display:flex; align-items:center; justify-content:center; }
 .tbtn:hover { background:rgba(255,255,255,0.06); color:#e2ddd6; }
@@ -379,7 +387,7 @@ function Timeline({ articles, onArticle }) {
               <div key={a.id} className="tl-pin-wrap" style={{left:x,bottom:36}}
                 onMouseEnter={()=>setHovered(a)} onMouseLeave={()=>setHovered(null)}
                 onClick={()=>onArticle(a)}>
-                <div className="tl-pin-label">{a.location?.split(",")[0]||a.title?.slice(0,14)}</div>
+                <div className="tl-pin-label">{getLocations(a)[0]?.split(",")[0] || a.title?.slice(0,14)}</div>
                 <div className={`tl-pin${a.status==="draft"?" draft":""}`} />
               </div>
             );
@@ -390,7 +398,7 @@ function Timeline({ articles, onArticle }) {
         <div className="tl-preview show" style={{left:pos.x,top:pos.y}}>
           {hovered.coverImage?<img src={hovered.coverImage} className="tl-preview-img" alt="" />:<div className="tl-preview-no-img">✈</div>}
           <div className="tl-preview-body">
-            {hovered.location&&<div className="tl-preview-loc">{hovered.location}</div>}
+            {hovered.location&&<div className="tl-preview-loc">{getLocations(hovered).join(" · ")}</div>}
             <div className="tl-preview-title">{hovered.title||"Untitled"}</div>
             {hovered.date&&<div className="tl-preview-date">{fmtDate(hovered.date)}</div>}
           </div>
@@ -427,27 +435,36 @@ function WorldMap({ articles, onArticle }) {
   // floating panel state
   const [panel, setPanel]   = useState(null); // { x, y, group }
 
-  const pubs = articles.filter(a => a.status === "published" && a.location);
+  const pubs = articles.filter(a => a.status === "published");
 
-  // Geocode all locations, then cluster by matching lat/lng (same location text → same pin)
+  // Expand each article into one entry per location
+  const allLocs = [];
+  pubs.forEach(a => {
+    const locs = Array.isArray(a.locations) && a.locations.length ? a.locations : (a.location ? [a.location] : []);
+    locs.forEach(loc => allLocs.push({ loc, article: a }));
+  });
+
+  // Geocode all locations, then cluster by matching location key
   useEffect(() => {
     let cancelled = false;
     (async () => {
-      // Build a map: locationKey → { lat, lng, articles[] }
       const byLoc = {};
-      for (const a of pubs) {
-        const key = a.location.toLowerCase().trim();
+      for (const { loc, article } of allLocs) {
+        const key = loc.toLowerCase().trim();
         if (!byLoc[key]) {
-          const c = await geocode(a.location);
+          const c = await geocode(loc);
           if (!c) continue;
-          byLoc[key] = { lat: c.lat, lng: c.lng, location: a.location, articles: [] };
+          byLoc[key] = { lat: c.lat, lng: c.lng, location: loc, articles: [] };
         }
-        byLoc[key].articles.push(a);
+        // avoid duplicates (same article listed twice for same location)
+        if (!byLoc[key].articles.find(a => a.id === article.id)) {
+          byLoc[key].articles.push(article);
+        }
       }
       if (!cancelled) setGroups(Object.values(byLoc));
     })();
     return () => { cancelled = true; };
-  }, [pubs.map(a => a.id + a.location).join(",")]);
+  }, [allLocs.map(e => e.article.id + e.loc).join(",")]);
 
   // Build/refresh Leaflet markers whenever groups change
   useEffect(() => {
@@ -505,7 +522,7 @@ function WorldMap({ articles, onArticle }) {
     });
   }, [groups]);
 
-  if (pubs.length === 0) return null;
+  if (allLocs.length === 0) return null;
 
   return (
     <>
@@ -629,7 +646,7 @@ function Footer({ articles, onArticle, isOwner, onSignIn, user }) {
               {recent.map(a=>(
                 <div key={a.id} className="footer-link" onClick={()=>onArticle(a)}>
                   <span style={{overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{a.title||"Untitled"}</span>
-                  {a.location && <span className="footer-link-loc">{a.location.split(",")[0]}</span>}
+                  {getLocations(a).length > 0 && <span className="footer-link-loc">{getLocations(a)[0].split(",")[0]}</span>}
                 </div>
               ))}
               {recent.length===0 && <span style={{fontSize:13,color:"#2a2826",fontStyle:"italic"}}>No articles yet</span>}
@@ -909,17 +926,83 @@ function CoverUpload({ cover, onCover }) {
 }
 
 // ── EDITOR ────────────────────────────────────────────────────
+// Helper: normalise legacy single-location articles
+function getLocations(article) {
+  if (!article) return [];
+  if (Array.isArray(article.locations)) return article.locations;
+  if (article.location) return [article.location];
+  return [];
+}
+
+function LocationTags({ locations, onChange }) {
+  const [input, setInput] = useState("");
+  const inputRef = useRef();
+
+  const add = (val) => {
+    const v = val.trim();
+    if (!v || locations.includes(v)) { setInput(""); return; }
+    onChange([...locations, v]);
+    setInput("");
+  };
+
+  const remove = (loc) => onChange(locations.filter(l => l !== loc));
+
+  const onKeyDown = (e) => {
+    if ((e.key === "Enter" || e.key === ",") && input.trim()) {
+      e.preventDefault();
+      add(input);
+    } else if (e.key === "Backspace" && !input && locations.length) {
+      remove(locations[locations.length - 1]);
+    }
+  };
+
+  return (
+    <div className="loc-tags-wrap" onClick={()=>inputRef.current?.focus()}>
+      {locations.map(loc => (
+        <span key={loc} className="loc-tag">
+          {loc}
+          <button className="loc-tag-remove" onMouseDown={e=>{e.preventDefault();remove(loc);}}>×</button>
+        </span>
+      ))}
+      <input
+        ref={inputRef}
+        className="loc-tag-input"
+        value={input}
+        onChange={e=>setInput(e.target.value)}
+        onKeyDown={onKeyDown}
+        onBlur={()=>{ if(input.trim()) add(input); }}
+        placeholder={locations.length ? "Add another location…" : "Tokyo, Japan · press Enter to add"}
+      />
+    </div>
+  );
+}
+
 function Editor({ article, onSave, onCancel }) {
-  const [title,    setTitle]    = useState(article?.title||"");
-  const [subtitle, setSubtitle] = useState(article?.subtitle||"");
-  const [location, setLocation] = useState(article?.location||"");
-  const [date,     setDate]     = useState(article?.date||new Date().toISOString().split("T")[0]);
-  const [cover,    setCover]    = useState(article?.coverImage||"");
-  const [spotifyUrl, setSpotifyUrl] = useState(article?.spotifyUrl||"");
+  const [title,     setTitle]     = useState(article?.title||"");
+  const [subtitle,  setSubtitle]  = useState(article?.subtitle||"");
+  const [locations, setLocations] = useState(getLocations(article));
+  const [date,      setDate]      = useState(article?.date||new Date().toISOString().split("T")[0]);
+  const [cover,     setCover]     = useState(article?.coverImage||"");
+  const [spotifyUrl,setSpotifyUrl]= useState(article?.spotifyUrl||"");
   const editorRef = useRef(null);
+
   useEffect(()=>{ if(editorRef.current) editorRef.current.innerHTML=article?.content||""; },[]);
-  const save = status => onSave({...article, id:article?.id||genId(), title, subtitle, location, date, coverImage:cover, spotifyUrl, content:editorRef.current?.innerHTML||"", status, createdAt:article?.createdAt||new Date().toISOString(), updatedAt:new Date().toISOString()});
+
+  const save = status => onSave({
+    ...article,
+    id: article?.id || genId(),
+    title, subtitle,
+    locations,                          // new array field
+    location: locations[0] || "",       // keep for backward compat (cards, timeline, etc.)
+    date, coverImage: cover, spotifyUrl,
+    content: editorRef.current?.innerHTML || "",
+    status,
+    createdAt: article?.createdAt || new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+  });
+
   const spotifyEmbed = toSpotifyEmbed(spotifyUrl);
+
   return (
     <div className="ed">
       <div className="ed-top">
@@ -933,14 +1016,21 @@ function Editor({ article, onSave, onCancel }) {
       <CoverUpload cover={cover} onCover={setCover} />
       <input className="ef ef-title" placeholder="Article title" value={title} onChange={e=>setTitle(e.target.value)} />
       <input className="ef ef-sub" placeholder="Subtitle…" value={subtitle} onChange={e=>setSubtitle(e.target.value)} />
-      <div className="ef-meta-row">
-        <input className="ef" style={{textTransform:"uppercase",letterSpacing:"1px"}} placeholder="Location" value={location} onChange={e=>setLocation(e.target.value)} />
-        <input className="ef" type="date" value={date} onChange={e=>setDate(e.target.value)} />
+      <div style={{display:"flex",gap:20,alignItems:"flex-start"}}>
+        <div style={{flex:1}}>
+          <div style={{fontSize:10,fontFamily:"'Helvetica Neue',sans-serif",letterSpacing:"3px",textTransform:"uppercase",color:"#3a3836",marginBottom:4,marginTop:10}}>Locations</div>
+          <LocationTags locations={locations} onChange={setLocations} />
+          <div style={{fontSize:11,color:"#262422",fontFamily:"'Helvetica Neue',sans-serif",marginTop:4}}>Press Enter or comma to add · each location gets a map pin</div>
+        </div>
+        <div style={{flexShrink:0,marginTop:10}}>
+          <div style={{fontSize:10,fontFamily:"'Helvetica Neue',sans-serif",letterSpacing:"3px",textTransform:"uppercase",color:"#3a3836",marginBottom:4}}>Date</div>
+          <input className="ef" type="date" value={date} onChange={e=>setDate(e.target.value)} style={{width:160}} />
+        </div>
       </div>
       <div className="ed-spacer" />
       <Toolbar editorRef={editorRef} onUpdate={()=>{}} />
       <div ref={editorRef} contentEditable suppressContentEditableWarning className="ed-area" data-ph="Begin writing your dispatch…" />
-      <p className="ed-hint">⬜ Photo uploads from your laptop or URL · ▶ Video embeds YouTube/Vimeo · Ctrl+B bold · Ctrl+I italic</p>
+      <p className="ed-hint">⬜ Photo · ▶ Video · Ctrl+B bold · Ctrl+I italic</p>
       <div className="spotify-ed-section">
         <div className="spotify-ed-label"><SpotifyIcon /> Soundtrack</div>
         <input className="ef ef-url" placeholder="Spotify playlist, album, or track URL (optional)" value={spotifyUrl} onChange={e=>setSpotifyUrl(e.target.value)} />
@@ -1012,7 +1102,7 @@ function GridCard({ article, onClick }) {
     <div className="card" onClick={()=>onClick(article)}>
       <div className="card-img">{article.coverImage?<img src={article.coverImage} alt="" />:<div className="card-no-img">✈</div>}</div>
       <div className="card-body">
-        {article.location && <div className="card-loc">{article.location}</div>}
+        {getLocations(article).length > 0 && <div className="card-loc">{getLocations(article).join(" · ")}</div>}
         <h3 className="card-title">{article.title||"Untitled"}</h3>
         <p className="card-sub">{article.subtitle||exc(article.content||"")}</p>
         {article.date && <div className="card-date">{fmtShort(article.date)}</div>}
@@ -1062,9 +1152,14 @@ function ArticleView({ article, onEdit, onBack, onToggle, onDelete, isOwner }) {
   return (
     <div>
       {hasImg ? (
-        <div className="av-hero"><img src={article.coverImage} alt="" /><div className="av-hero-grad" /><div className="av-hero-text">{article.location&&<span className="av-loc">{article.location}</span>}<h1 className="av-title">{article.title||"Untitled"}</h1>{article.subtitle&&<p className="av-sub">{article.subtitle}</p>}</div></div>
+        <div className="av-hero"><img src={article.coverImage} alt="" /><div className="av-hero-grad" /><div className="av-hero-text">
+          {getLocations(article).length > 0 && <span className="av-loc">{getLocations(article).join(" · ")}</span>}
+          <h1 className="av-title">{article.title||"Untitled"}</h1>{article.subtitle&&<p className="av-sub">{article.subtitle}</p>}</div></div>
       ) : (
-        <div className="av-no-hero-text">{article.location&&<span className="av-loc">{article.location}</span>}<h1 className="av-title onpage">{article.title||"Untitled"}</h1>{article.subtitle&&<p className="av-sub onpage">{article.subtitle}</p>}</div>
+        <div className="av-no-hero-text">
+          {getLocations(article).length > 0 && <span className="av-loc">{getLocations(article).join(" · ")}</span>}
+          <h1 className="av-title onpage">{article.title||"Untitled"}</h1>{article.subtitle&&<p className="av-sub onpage">{article.subtitle}</p>}
+        </div>
       )}
       <div className="av-bar">
         <div className="av-bar-l">
