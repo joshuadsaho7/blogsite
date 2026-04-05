@@ -354,8 +354,8 @@ const CSS = `
 .ae-field:focus { border-color:rgba(201,168,76,.4); }
 .ae-field::placeholder { color:#2a2826; font-style:italic; }
 .ae-btns { display:flex; gap:10px; justify-content:flex-end; margin-top:4px; }
-.footer-admin-link { font-family:'Helvetica Neue',sans-serif; font-size:11px; color:#1a1816; cursor:pointer; transition:color .2s; }
-.footer-admin-link:hover { color:#3a3836; }
+.footer-admin-link { font-family:'Helvetica Neue',sans-serif; font-size:11px; color:#1a1816; cursor:pointer; transition:color .2s; display:inline-block; padding:8px 12px; margin:-8px -12px; user-select:none; }
+.footer-admin-link:hover { color:#2a2826; }
 `;
 
 // ── TIMELINE ──────────────────────────────────────────────────
@@ -656,7 +656,7 @@ function Footer({ articles, onArticle, isOwner, onSignIn, user }) {
         <div className="footer-bottom">
           <span className="footer-copy">© {new Date().getFullYear()} · All rights reserved</span>
           <div style={{display:"flex",alignItems:"center",gap:12}}>
-            {!user && <span className="footer-admin-link" onClick={onSignIn}>·</span>}
+            {!user && <span className="footer-admin-link" onClick={onSignIn}>atlas</span>}
             <span className="footer-logo">ATLAS<em>.</em></span>
           </div>
         </div>
@@ -1276,6 +1276,20 @@ function App() {
 
   const signIn  = ()=>{ const p=new firebase.auth.GoogleAuthProvider(); auth.signInWithPopup(p).catch(e=>alert("Sign in failed: "+e.message)); };
   const signOut = ()=>auth.signOut();
+
+  // Keyboard shortcut: press \ three times quickly to trigger sign-in
+  useEffect(()=>{
+    let count=0, timer=null;
+    const handler = e=>{
+      if(e.key!=="\\") return;
+      count++;
+      clearTimeout(timer);
+      if(count>=3){ count=0; if(!user) signIn(); }
+      else timer=setTimeout(()=>{ count=0; },800);
+    };
+    window.addEventListener("keydown",handler);
+    return ()=>window.removeEventListener("keydown",handler);
+  },[user]);
 
   const handleSave = art => {
     if(!isOwner) return;
